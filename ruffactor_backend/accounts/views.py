@@ -7,8 +7,9 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Kudos, SkillCategory, Team, TeamMembership
+from .models import Kudos, Profile, SkillCategory, Team, TeamMembership
 from .serializers import (
+    ActiveTeamWriteSerializer,
     KudosReadSerializer,
     KudosWriteSerializer,
     LoginSerializer,
@@ -18,6 +19,19 @@ from .serializers import (
     TeamMembershipWriteSerializer,
     TeamSerializer,
 )
+
+
+def _user_teams_queryset(user):
+    return Team.objects.filter(memberships__user=user).order_by("name").distinct()
+
+
+def _get_profile_and_teams(user):
+    profile, _ = Profile.objects.get_or_create(user=user)
+    teams = _user_teams_queryset(user)
+    if profile.active_team_id and not teams.filter(id=profile.active_team_id).exists():
+        profile.active_team = None
+        profile.save(update_fields=["active_team", "updated_at"])
+    return profile, teams
 
 
 class SignUpView(generics.CreateAPIView):
@@ -33,6 +47,10 @@ class LoginView(APIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data["user"]
         auth_login(request, user)
+        profile, teams = _get_profile_and_teams(user)
+        if "team" in serializer.validated_data:
+            profile.active_team = serializer.validated_data["team"]
+            profile.save(update_fields=["active_team", "updated_at"])
 
         return Response(
             {
@@ -43,10 +61,53 @@ class LoginView(APIView):
                     "email": user.email,
                     "first_name": user.first_name,
                     "last_name": user.last_name,
+                    "active_team": (
+                        TeamSerializer(profile.active_team).data
+                        if profile.active_team
+                        else None
+                    ),
+                    "teams": TeamSerializer(teams, many=True).data,
                 },
             },
             status=status.HTTP_200_OK,
         )
+
+
+class ActiveTeamView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        profile, teams = _get_profile_and_teams(request.user)
+        return Response(
+            {
+                "active_team": (
+                    TeamSerializer(profile.active_team).data
+                    if profile.active_team
+                    else None
+                ),
+                "teams": TeamSerializer(teams, many=True).data,
+            }
+        )
+
+    def put(self, request):
+        serializer = ActiveTeamWriteSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        profile, teams = _get_profile_and_teams(request.user)
+        profile.active_team = serializer.validated_data["team"]
+        profile.save(update_fields=["active_team", "updated_at"])
+        return Response(
+            {
+                "active_team": (
+                    TeamSerializer(profile.active_team).data
+                    if profile.active_team
+                    else None
+                ),
+                "teams": TeamSerializer(teams, many=True).data,
+            }
+        )
+
+    def patch(self, request):
+        return self.put(request)
 
 
 class IsSenderOrStaff(permissions.BasePermission):

@@ -2,7 +2,7 @@ from django.contrib.auth import authenticate, get_user_model, password_validatio
 from django.utils.text import slugify
 from rest_framework import serializers
 
-from .models import Kudos, SkillCategory, Team, TeamMembership
+from .models import Kudos, Profile, SkillCategory, Team, TeamMembership
 
 
 User = get_user_model()
@@ -52,12 +52,19 @@ class SignUpSerializer(serializers.ModelSerializer):
         user = User(**validated_data)
         user.set_password(password)
         user.save()
+        Profile.objects.get_or_create(user=user)
         return user
 
 
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
+    team_id = serializers.PrimaryKeyRelatedField(
+        queryset=Team.objects.all(),
+        source="team",
+        required=False,
+        allow_null=True,
+    )
 
     def validate(self, attrs):
         email = attrs.get("email").strip().lower()
@@ -71,6 +78,14 @@ class LoginSerializer(serializers.Serializer):
         user = authenticate(username=user.username, password=password)
         if not user:
             raise serializers.ValidationError("Invalid email or password.")
+
+        selected_team = attrs.get("team")
+        if selected_team is not None:
+            is_member = TeamMembership.objects.filter(user=user, team=selected_team).exists()
+            if not is_member:
+                raise serializers.ValidationError(
+                    {"team_id": "You can only select teams you belong to."}
+                )
 
         attrs["user"] = user
         return attrs
@@ -136,6 +151,23 @@ class TeamMembershipWriteSerializer(serializers.Serializer):
         choices=TeamMembership.Role.choices,
         default=TeamMembership.Role.MEMBER,
     )
+
+
+class ActiveTeamWriteSerializer(serializers.Serializer):
+    team_id = serializers.PrimaryKeyRelatedField(
+        queryset=Team.objects.all(),
+        source="team",
+        allow_null=True,
+    )
+
+    def validate_team(self, value):
+        if value is None:
+            return value
+        user = self.context["request"].user
+        is_member = TeamMembership.objects.filter(user=user, team=value).exists()
+        if not is_member:
+            raise serializers.ValidationError("You can only select teams you belong to.")
+        return value
 
 
 class SkillCategorySerializer(serializers.ModelSerializer):

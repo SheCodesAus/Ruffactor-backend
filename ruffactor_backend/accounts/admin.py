@@ -26,7 +26,8 @@ class TeamMembershipAdmin(admin.ModelAdmin):
 
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
-    list_display = ("user", "display_name", "created_at")
+    list_display = ("user", "display_name", "active_team", "created_at")
+    list_filter = ("active_team",)
     search_fields = ("user__username", "user__email", "display_name")
 
 

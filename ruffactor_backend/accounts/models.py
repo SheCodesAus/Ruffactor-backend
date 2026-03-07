@@ -20,6 +20,13 @@ class Profile(TimeStampedModel):
     display_name = models.CharField(max_length=120, blank=True)
     bio = models.TextField(blank=True)
     avatar_url = models.URLField(blank=True)
+    active_team = models.ForeignKey(
+        "Team",
+        on_delete=models.SET_NULL,
+        related_name="active_profiles",
+        null=True,
+        blank=True,
+    )
 
     def __str__(self):
         return self.display_name or self.user.get_username()
