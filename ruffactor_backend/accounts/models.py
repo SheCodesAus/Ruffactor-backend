@@ -1,0 +1,181 @@
+from django.conf import settings
+from django.db import models
+from django.db.models import F, Q
+
+
+class TimeStampedModel(models.Model):
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        abstract = True
+
+
+class Profile(TimeStampedModel):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="profile",
+    )
+    display_name = models.CharField(max_length=120, blank=True)
+    bio = models.TextField(blank=True)
+    avatar_url = models.URLField(blank=True)
+
+    def __str__(self):
+        return self.display_name or self.user.get_username()
+
+
+class SkillCategory(TimeStampedModel):
+    name = models.CharField(max_length=80, unique=True)
+    slug = models.SlugField(max_length=90, unique=True)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class Team(TimeStampedModel):
+    name = models.CharField(max_length=120, unique=True)
+    slug = models.SlugField(max_length=140, unique=True)
+    description = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class TeamMembership(TimeStampedModel):
+    class Role(models.TextChoices):
+        ADMIN = "admin", "Admin"
+        MEMBER = "member", "Member"
+
+    team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="memberships")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="team_memberships",
+    )
+    role = models.CharField(max_length=10, choices=Role.choices, default=Role.MEMBER)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["team", "user"], name="uniq_team_member"),
+        ]
+        indexes = [
+            models.Index(fields=["team", "role"]),
+            models.Index(fields=["user", "role"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user} in {self.team} ({self.role})"
+
+
+class Kudos(TimeStampedModel):
+    class Visibility(models.TextChoices):
+        PUBLIC = "public", "Public"
+        TEAM = "team", "Team"
+        PRIVATE = "private", "Private"
+
+    sender = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="kudos_sent",
+    )
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="kudos_received",
+    )
+    message = models.TextField(max_length=1000)
+    link_url = models.URLField(blank=True)
+    media_url = models.URLField(blank=True)
+    visibility = models.CharField(
+        max_length=10,
+        choices=Visibility.choices,
+        default=Visibility.PUBLIC,
+    )
+    skills = models.ManyToManyField(
+        SkillCategory,
+        through="KudosSkillTag",
+        related_name="kudos_posts",
+    )
+    target_teams = models.ManyToManyField(
+        Team,
+        through="KudosTargetTeam",
+        related_name="targeted_kudos",
+        blank=True,
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.CheckConstraint(
+                condition=~Q(sender=F("recipient")),
+                name="kudos_sender_not_recipient",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["-created_at"]),
+            models.Index(fields=["recipient", "-created_at"]),
+            models.Index(fields=["sender", "-created_at"]),
+            models.Index(fields=["visibility", "-created_at"]),
+        ]
+
+    def __str__(self):
+        return f"Kudos from {self.sender} to {self.recipient}"
+
+
+class KudosTargetTeam(TimeStampedModel):
+    kudos = models.ForeignKey(
+        Kudos,
+        on_delete=models.CASCADE,
+        related_name="team_targets",
+    )
+    team = models.ForeignKey(
+        Team,
+        on_delete=models.CASCADE,
+        related_name="kudos_targets",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["kudos", "team"], name="uniq_kudos_target_team"),
+        ]
+        indexes = [
+            models.Index(fields=["team", "created_at"]),
+            models.Index(fields=["kudos", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.kudos_id}:{self.team.name}"
+
+
+class KudosSkillTag(TimeStampedModel):
+    kudos = models.ForeignKey(
+        Kudos,
+        on_delete=models.CASCADE,
+        related_name="skill_tags",
+    )
+    skill = models.ForeignKey(
+        SkillCategory,
+        on_delete=models.CASCADE,
+        related_name="kudos_tags",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["kudos", "skill"], name="uniq_kudos_skill_tag"),
+        ]
+        indexes = [
+            models.Index(fields=["skill", "created_at"]),
+            models.Index(fields=["kudos", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.kudos_id}:{self.skill.name}"

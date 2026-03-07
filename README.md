@@ -164,7 +164,7 @@ This website has two major target audiences: She Codes ‘Leaders, Volunteers & 
 | :---------- | :---------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------- | :----------------------- | :---------------------------------------------------- |
 | POST        | /login                              | Allow users to log in                                                                                                                    | ““Username”:”string”, “password”:”string”                                                                          | 200                      | Token auth                                            |
 | POST        | /logout                             | Allow users to log out ( end active session)                                                                                             | ““Username”:”string”, “password”:”string”                                                                          | 200                      | Will clear user log in session \- remove stored token |
-| POST        | /Register                           | Create new student or approver user                                                                                                      | “Username”:”string”, “FullName”: “string” “Email”:”string”,”Password”:”string”, ”Password2”:”string”,              | 201                      | Admin                                                 |
+| POST        | /Register                           | Create new student or approver user                                                                                                      | “Username”:”string”, “FullName”: “string” “Email”:”string”,”Password”:”string”, ”ConfirmPassword”:”string”,        | 201                      | Admin                                                 |
 | PUT         | /Profile/ID                         | Edit user                                                                                                                                | “Username”:”string”, “FullName”: “string” “Email”:”string”, “Avatar”:”string”,  “Bio”:”string”, “Socials”:”string” | 200                      | Admin, approver or student with matching ID           |
 | GET         | /Profile/ID                         | View User profile                                                                                                                        | NA                                                                                                                 | 200                      | Any                                                   |
 | DELETE      | /User/ID                            | Delete user                                                                                                                              | NA                                                                                                                 | 204                      | Admin, approver or student with matching ID           |
@@ -183,47 +183,184 @@ This website has two major target audiences: She Codes ‘Leaders, Volunteers & 
 | POST        | /StickyStatus                       | Create available statuses for stickyNotes                                                                                                | “StatusName”:”string”                                                                                              | 201                      | Admin                                                 |
 | GET         | /StickyStatus                       | Get all statuses                                                                                                                         | NA                                                                                                                 | 200                      | Admin                                                 |
 
-### Object Definitions
+### Object Definitions (Current Backend Models)
 
-> [!NOTE]  
-> Define the actual objects that your API returns. The example GET method above says it returns “all projects”, so we need to define what a “project” looks like. Example below.
+#### Auth User (`django.contrib.auth.models.User`)
+| Field | Data type |
+| :---- | :-------- |
+| `id` (PK) | integer |
+| `username` | string |
+| `email` | string |
+| `first_name` | string |
+| `last_name` | string |
+| `password` | string (hashed) |
 
-#### Users
-| Field              | Data type |
-| :----------------- | :-------- |
-| *User\_ID (PK)*    |           |
-| *Username*         | string    |
-| FullName           | string    |
-| *Email*            | string    |
-| *Password*         | string    |
-| *Password2*        | string    |
-| Auth\_ID (FK)      | integer   |
-| StickyNoteId (FK)  | integer   |
-| Event\_Id (FK)     | integer   |
-| Collection\_Id(FK) | integer   |
-| Avatar             | string    |
-| Bio                | string    |
-| SocialLink         | string    |
+#### Profile
+| Field | Data type |
+| :---- | :-------- |
+| `id` (PK) | integer |
+| `user_id` (FK, unique) | integer |
+| `display_name` | string |
+| `bio` | text |
+| `avatar_url` | string (URL) |
+| `created_at` | datetime |
+| `updated_at` | datetime |
 
-#### Sticky Notes
-| Field                   | Data Type |
-| :---------------------- | :-------- |
-| Sticky\_ID (PK)         | integer   |
-| WinComment              | string    |
-| Guest                   | boolean   |
-| UserId (FK)             | integer   |
-| Event\_Id (FK)          | integrer  |
-| Collection\_Id (FK)     | integrer  |
-| Sticky\_Status\_ID (FK) | integrer  |
+#### Team
+| Field | Data type |
+| :---- | :-------- |
+| `id` (PK) | integer |
+| `name` (unique) | string |
+| `slug` (unique) | string |
+| `description` | text |
+| `created_at` | datetime |
+| `updated_at` | datetime |
 
-> [!NOTE]  
-> ... etc
+#### TeamMembership
+| Field | Data type |
+| :---- | :-------- |
+| `id` (PK) | integer |
+| `team_id` (FK) | integer |
+| `user_id` (FK) | integer |
+| `role` | enum (`admin`, `member`) |
+| `created_at` | datetime |
+| `updated_at` | datetime |
+
+Constraints:
+`UNIQUE(team_id, user_id)`
+
+#### SkillCategory
+| Field | Data type |
+| :---- | :-------- |
+| `id` (PK) | integer |
+| `name` (unique) | string |
+| `slug` (unique) | string |
+| `description` | text |
+| `is_active` | boolean |
+| `created_at` | datetime |
+| `updated_at` | datetime |
+
+#### Kudos
+| Field | Data type |
+| :---- | :-------- |
+| `id` (PK) | integer |
+| `sender_id` (FK) | integer |
+| `recipient_id` (FK) | integer |
+| `message` | text |
+| `link_url` | string (URL) |
+| `media_url` | string (URL) |
+| `visibility` | enum (`public`, `team`, `private`) |
+| `created_at` | datetime |
+| `updated_at` | datetime |
+
+Constraints:
+`sender_id != recipient_id`
+
+#### KudosSkillTag
+| Field | Data type |
+| :---- | :-------- |
+| `id` (PK) | integer |
+| `kudos_id` (FK) | integer |
+| `skill_id` (FK) | integer |
+| `created_at` | datetime |
+| `updated_at` | datetime |
+
+Constraints:
+`UNIQUE(kudos_id, skill_id)`
+
+#### KudosTargetTeam
+| Field | Data type |
+| :---- | :-------- |
+| `id` (PK) | integer |
+| `kudos_id` (FK) | integer |
+| `team_id` (FK) | integer |
+| `created_at` | datetime |
+| `updated_at` | datetime |
+
+Constraints:
+`UNIQUE(kudos_id, team_id)`
+
+#### Sign-up Payload (API Input)
+| Field | Data type |
+| :---- | :-------- |
+| `username` | string |
+| `email` | string |
+| `first_name` | string |
+| `last_name` | string |
+| `password` | string |
+| `confirm_password` | string |
 
 ### Database Schema
-> [!NOTE]  
-> Insert an image of your database schema (could be a photo of a hand-drawn schema or a screenshot of a schema created using a tool such as ​​https://drawsql.app/). Example below.
+This ER diagram reflects the current backend schema (users, profiles, teams, memberships, kudos, skills, and join tables):
 
-![Our database schema](./img/schema.png)
+```mermaid
+erDiagram
+    AUTH_USER ||--o| PROFILE : has
+    AUTH_USER ||--o{ TEAM_MEMBERSHIP : joins
+    TEAM ||--o{ TEAM_MEMBERSHIP : includes
+
+    AUTH_USER ||--o{ KUDOS : sends
+    AUTH_USER ||--o{ KUDOS : receives
+
+    KUDOS ||--o{ KUDOS_SKILL_TAG : tagged_with
+    SKILL_CATEGORY ||--o{ KUDOS_SKILL_TAG : categorizes
+
+    KUDOS ||--o{ KUDOS_TARGET_TEAM : targets
+    TEAM ||--o{ KUDOS_TARGET_TEAM : receives
+
+    AUTH_USER {
+      int id PK
+      string username
+      string email
+    }
+    PROFILE {
+      int id PK
+      int user_id FK
+      string display_name
+      string avatar_url
+      string bio
+    }
+    TEAM {
+      int id PK
+      string name
+      string slug
+      string description
+    }
+    TEAM_MEMBERSHIP {
+      int id PK
+      int team_id FK
+      int user_id FK
+      string role
+    }
+    SKILL_CATEGORY {
+      int id PK
+      string name
+      string slug
+      string description
+      bool is_active
+    }
+    KUDOS {
+      int id PK
+      int sender_id FK
+      int recipient_id FK
+      string visibility
+      string message
+      string link_url
+      string media_url
+    }
+    KUDOS_SKILL_TAG {
+      int id PK
+      int kudos_id FK
+      int skill_id FK
+    }
+    KUDOS_TARGET_TEAM {
+      int id PK
+      int kudos_id FK
+      int team_id FK
+    }
+```
+
+You can also generate the same structure visually in drawsql.app and paste/export an image if your team prefers.
 
 ## Front-end Implementation
 
