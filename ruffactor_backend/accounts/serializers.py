@@ -1,4 +1,4 @@
-from django.contrib.auth import get_user_model, password_validation
+from django.contrib.auth import get_user_model, password_validation, authenticate
 from rest_framework import serializers
 
 
@@ -24,6 +24,13 @@ class SignUpSerializer(serializers.ModelSerializer):
 
     def validate_email(self, value):
         normalized = value.strip().lower()
+        allowed_domain = "@gmail.com" # This will need to be @pixelpulse.com.au later
+
+        if not normalized.endswith(allowed_domain):
+            raise serializers.ValidationError(
+                "Only @pixelpulse.com.au email addresses are allowed."
+            )
+    
         if User.objects.filter(email__iexact=normalized).exists():
             raise serializers.ValidationError("A user with this email already exists.")
         return normalized
@@ -48,3 +55,25 @@ class SignUpSerializer(serializers.ModelSerializer):
         user.set_password(password)
         user.save()
         return user
+
+
+class LoginSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        email = attrs.get("email").strip().lower()
+        password = attrs.get("password")
+
+        try:
+            user = User.objects.get(email__iexact=email)
+        except User.DoesNotExist:
+            raise serializers.ValidationError("Invalid email or password.")
+
+        user = authenticate(username=user.username, password=password)
+
+        if not user:
+            raise serializers.ValidationError("Invalid email or password.")
+
+        attrs["user"] = user
+        return attrs
