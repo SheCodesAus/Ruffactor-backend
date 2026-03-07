@@ -38,7 +38,50 @@ class SkillCategory(TimeStampedModel):
         return self.name
 
 
+class Team(TimeStampedModel):
+    name = models.CharField(max_length=120, unique=True)
+    slug = models.SlugField(max_length=140, unique=True)
+    description = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class TeamMembership(TimeStampedModel):
+    class Role(models.TextChoices):
+        ADMIN = "admin", "Admin"
+        MEMBER = "member", "Member"
+
+    team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="memberships")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="team_memberships",
+    )
+    role = models.CharField(max_length=10, choices=Role.choices, default=Role.MEMBER)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["team", "user"], name="uniq_team_member"),
+        ]
+        indexes = [
+            models.Index(fields=["team", "role"]),
+            models.Index(fields=["user", "role"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user} in {self.team} ({self.role})"
+
+
 class Kudos(TimeStampedModel):
+    class Visibility(models.TextChoices):
+        PUBLIC = "public", "Public"
+        TEAM = "team", "Team"
+        PRIVATE = "private", "Private"
+
     sender = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
@@ -52,11 +95,21 @@ class Kudos(TimeStampedModel):
     message = models.TextField(max_length=1000)
     link_url = models.URLField(blank=True)
     media_url = models.URLField(blank=True)
-    is_public = models.BooleanField(default=True)
+    visibility = models.CharField(
+        max_length=10,
+        choices=Visibility.choices,
+        default=Visibility.PUBLIC,
+    )
     skills = models.ManyToManyField(
         SkillCategory,
         through="KudosSkillTag",
         related_name="kudos_posts",
+    )
+    target_teams = models.ManyToManyField(
+        Team,
+        through="KudosTargetTeam",
+        related_name="targeted_kudos",
+        blank=True,
     )
 
     class Meta:
@@ -71,10 +124,36 @@ class Kudos(TimeStampedModel):
             models.Index(fields=["-created_at"]),
             models.Index(fields=["recipient", "-created_at"]),
             models.Index(fields=["sender", "-created_at"]),
+            models.Index(fields=["visibility", "-created_at"]),
         ]
 
     def __str__(self):
         return f"Kudos from {self.sender} to {self.recipient}"
+
+
+class KudosTargetTeam(TimeStampedModel):
+    kudos = models.ForeignKey(
+        Kudos,
+        on_delete=models.CASCADE,
+        related_name="team_targets",
+    )
+    team = models.ForeignKey(
+        Team,
+        on_delete=models.CASCADE,
+        related_name="kudos_targets",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["kudos", "team"], name="uniq_kudos_target_team"),
+        ]
+        indexes = [
+            models.Index(fields=["team", "created_at"]),
+            models.Index(fields=["kudos", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.kudos_id}:{self.team.name}"
 
 
 class KudosSkillTag(TimeStampedModel):
