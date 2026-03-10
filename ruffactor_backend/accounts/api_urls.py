@@ -1,7 +1,12 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from .views import KudosViewSet, PublicKudosListView, SkillCategoryViewSet, TeamViewSet
+from .views import (
+    KudosViewSet,
+    PublicKudosListView,
+    SkillCategoryViewSet,
+    TeamViewSet,
+)
 
 router = DefaultRouter()
 router.register(r"teams", TeamViewSet, basename="team")

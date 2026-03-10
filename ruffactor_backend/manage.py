@@ -5,7 +5,11 @@ import sys
 
 
 def main():
-    """Run administrative tasks."""
+    """Entrypoint for Django management commands.
+
+    Raises:
+        ImportError: If Django cannot be imported in the current environment.
+    """
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'ruffactor_backend.settings')
     try:
         from django.core.management import execute_from_command_line
