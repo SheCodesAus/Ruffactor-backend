@@ -29,6 +29,11 @@ class Profile(TimeStampedModel):
     )
 
     def __str__(self):
+        """Return a display-friendly profile label.
+
+        Returns:
+            str: `display_name` when provided, otherwise the linked username.
+        """
         return self.display_name or self.user.get_username()
 
 
@@ -42,6 +47,11 @@ class SkillCategory(TimeStampedModel):
         ordering = ["name"]
 
     def __str__(self):
+        """Return the skill display value used in admin and API debug output.
+
+        Returns:
+            str: Skill name.
+        """
         return self.name
 
 
@@ -54,6 +64,11 @@ class Team(TimeStampedModel):
         ordering = ["name"]
 
     def __str__(self):
+        """Return the team display value used in admin and API debug output.
+
+        Returns:
+            str: Team name.
+        """
         return self.name
 
 
@@ -80,6 +95,11 @@ class TeamMembership(TimeStampedModel):
         ]
 
     def __str__(self):
+        """Return a concise membership description.
+
+        Returns:
+            str: Formatted string including user, team, and membership role.
+        """
         return f"{self.user} in {self.team} ({self.role})"
 
 
@@ -118,6 +138,24 @@ class Kudos(TimeStampedModel):
         related_name="targeted_kudos",
         blank=True,
     )
+    is_approved = models.BooleanField(default=False)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="kudos_approved",
+        null=True,
+        blank=True,
+    )
+    is_archived = models.BooleanField(default=False)
+    archived_at = models.DateTimeField(null=True, blank=True)
+    archived_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="kudos_archived",
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         ordering = ["-created_at"]
@@ -132,9 +170,16 @@ class Kudos(TimeStampedModel):
             models.Index(fields=["recipient", "-created_at"]),
             models.Index(fields=["sender", "-created_at"]),
             models.Index(fields=["visibility", "-created_at"]),
+            models.Index(fields=["is_approved", "-created_at"]),
+            models.Index(fields=["is_archived", "-created_at"]),
         ]
 
     def __str__(self):
+        """Return a short sender-to-recipient description.
+
+        Returns:
+            str: Human-readable sender and recipient summary.
+        """
         return f"Kudos from {self.sender} to {self.recipient}"
 
 
@@ -160,6 +205,11 @@ class KudosTargetTeam(TimeStampedModel):
         ]
 
     def __str__(self):
+        """Return compact identifier for a kudos/team relation row.
+
+        Returns:
+            str: Composite identifier in the form `{kudos_id}:{team_name}`.
+        """
         return f"{self.kudos_id}:{self.team.name}"
 
 
@@ -185,4 +235,38 @@ class KudosSkillTag(TimeStampedModel):
         ]
 
     def __str__(self):
+        """Return compact identifier for a kudos/skill relation row.
+
+        Returns:
+            str: Composite identifier in the form `{kudos_id}:{skill_name}`.
+        """
         return f"{self.kudos_id}:{self.skill.name}"
+
+
+class KudosComment(TimeStampedModel):
+    kudos = models.ForeignKey(
+        Kudos,
+        on_delete=models.CASCADE,
+        related_name="comments",
+    )
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="kudos_comments",
+    )
+    body = models.TextField(max_length=1000)
+
+    class Meta:
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["kudos", "created_at"]),
+            models.Index(fields=["author", "created_at"]),
+        ]
+
+    def __str__(self):
+        """Return compact identifier for a comment and parent kudos relation.
+
+        Returns:
+            str: Composite identifier containing comment and kudos IDs.
+        """
+        return f"Comment {self.id} on Kudos {self.kudos_id}"

@@ -2,6 +2,7 @@ from django.contrib import admin
 
 from .models import (
     Kudos,
+    KudosComment,
     KudosSkillTag,
     KudosTargetTeam,
     Profile,
@@ -40,8 +41,16 @@ class SkillCategoryAdmin(admin.ModelAdmin):
 
 @admin.register(Kudos)
 class KudosAdmin(admin.ModelAdmin):
-    list_display = ("id", "sender", "recipient", "visibility", "created_at")
-    list_filter = ("visibility",)
+    list_display = (
+        "id",
+        "sender",
+        "recipient",
+        "visibility",
+        "is_approved",
+        "is_archived",
+        "created_at",
+    )
+    list_filter = ("visibility", "is_approved", "is_archived")
     search_fields = ("message", "sender__username", "recipient__username")
 
 
@@ -57,3 +66,10 @@ class KudosSkillTagAdmin(admin.ModelAdmin):
     list_display = ("kudos", "skill", "created_at")
     list_filter = ("skill",)
     search_fields = ("kudos__message", "skill__name")
+
+
+@admin.register(KudosComment)
+class KudosCommentAdmin(admin.ModelAdmin):
+    list_display = ("id", "kudos", "author", "created_at")
+    search_fields = ("body", "author__username", "kudos__message")
+    list_filter = ("created_at",)

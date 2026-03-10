@@ -6,6 +6,13 @@ from django.db import migrations, models
 
 
 def backfill_visibility_from_is_public(apps, schema_editor):
+    """Backfill enum-based visibility from legacy boolean column values.
+
+    Args:
+        apps (Apps): Historical app registry provided by Django migrations.
+        schema_editor (BaseDatabaseSchemaEditor): Schema editor passed by migration
+            runtime. Not used directly in this data migration.
+    """
     Kudos = apps.get_model("accounts", "Kudos")
     Kudos.objects.filter(is_public=True).update(visibility="public")
     Kudos.objects.filter(is_public=False).update(visibility="private")

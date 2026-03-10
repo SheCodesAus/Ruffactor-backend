@@ -1,6 +1,11 @@
 # Your Product Name
 > Your Group Name
 
+## Frontend Integration Quick Link
+
+- Backend API contract for frontend integration:
+  [`ruffactor_backend/FRONTEND_INTEGRATION.md`](ruffactor_backend/FRONTEND_INTEGRATION.md)
+
 > [!NOTE]
 > This repo has been shared with your group. Use it to develop your group project.
 >
