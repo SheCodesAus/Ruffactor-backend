@@ -84,7 +84,7 @@ def _serialize_user_payload(user):
 
 class SignUpView(generics.CreateAPIView):
     serializer_class = SignUpSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.IsAuthenticated]
 
 
 class LoginView(APIView):
@@ -127,10 +127,8 @@ class UserAccountView(APIView):
         """Choose permission set based on method.
 
         Returns:
-            list[BasePermission]: `AllowAny` for POST, otherwise `IsAuthenticated`.
+            list[BasePermission]: `IsAuthenticated` for all methods.
         """
-        if self.request.method == "POST":
-            return [permissions.AllowAny()]
         return [permissions.IsAuthenticated()]
 
     def post(self, request):
@@ -812,9 +810,9 @@ class KudosViewSet(viewsets.ModelViewSet):
 
 
 class PublicKudosListView(generics.ListAPIView):
-    """Read-only public feed for unauthenticated pages."""
+    """Read-only kudos feed that now requires authentication."""
 
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.IsAuthenticated]
     serializer_class = KudosReadSerializer
 
     def get_queryset(self):

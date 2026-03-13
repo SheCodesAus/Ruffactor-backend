@@ -86,6 +86,75 @@ class UserAccountViewTests(APITestCase):
         self.assertIn("Cannot delete user", response.data["detail"])
         self.assertTrue(User.objects.filter(pk=self.user.pk).exists())
 
+    def test_post_user_requires_authentication(self):
+        """Verify anonymous account creation is blocked."""
+        response = self.client.post(
+            self.url,
+            {
+                "username": "new_user",
+                "email": "new_user@example.com",
+                "password": "StrongPass123!",
+                "confirm_password": "StrongPass123!",
+            },
+            format="json",
+        )
+
+        self.assertIn(
+            response.status_code,
+            {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN},
+        )
+
+
+class AuthenticationAccessTests(APITestCase):
+    def setUp(self):
+        """Create a user and URLs used to verify anonymous access rules."""
+        self.user = User.objects.create_user(
+            username="login_user",
+            email="login_user@example.com",
+            password="StrongPass123!",
+        )
+        self.login_url = "/auth/login/"
+        self.signup_url = "/auth/signup/"
+        self.public_kudos_url = "/api/kudos/public/"
+
+    def test_login_allows_anonymous_access(self):
+        """Verify login remains the only anonymous auth endpoint."""
+        response = self.client.post(
+            self.login_url,
+            {"email": self.user.email, "password": "StrongPass123!"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("token", response.data)
+
+    def test_signup_requires_authentication(self):
+        """Verify signup endpoint is no longer publicly accessible."""
+        response = self.client.post(
+            self.signup_url,
+            {
+                "username": "signup_user",
+                "email": "signup_user@example.com",
+                "password": "StrongPass123!",
+                "confirm_password": "StrongPass123!",
+            },
+            format="json",
+        )
+
+        self.assertIn(
+            response.status_code,
+            {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN},
+        )
+
+    def test_public_kudos_feed_requires_authentication(self):
+        """Verify anonymous users cannot access the read-only kudos feed."""
+        response = self.client.get(self.public_kudos_url)
+
+        self.assertIn(
+            response.status_code,
+            {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN},
+        )
+
 
 class KudosApiTicketTests(APITestCase):
     def setUp(self):
