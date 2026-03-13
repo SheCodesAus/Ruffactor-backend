@@ -12,6 +12,12 @@ class SignUpSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(required=True)
     password = serializers.CharField(write_only=True, min_length=8)
     confirm_password = serializers.CharField(write_only=True)
+    team_id = serializers.PrimaryKeyRelatedField(
+        queryset=Team.objects.all(),
+        source="team",
+        required=True,
+        write_only=True,
+    )
 
     class Meta:
         model = User
@@ -21,6 +27,7 @@ class SignUpSerializer(serializers.ModelSerializer):
             "email",
             "first_name",
             "last_name",
+            "team_id",
             "password",
             "confirm_password",
         )
@@ -69,7 +76,7 @@ class SignUpSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
-        """Create a new user and initialize profile row.
+        """Create a new user, team membership, and profile row.
 
         Args:
             validated_data (dict): Validated signup fields.
@@ -79,10 +86,18 @@ class SignUpSerializer(serializers.ModelSerializer):
         """
         validated_data.pop("confirm_password")
         password = validated_data.pop("password")
+        team = validated_data.pop("team")
         user = User(**validated_data)
         user.set_password(password)
         user.save()
-        Profile.objects.get_or_create(user=user)
+        profile, _ = Profile.objects.get_or_create(user=user)
+        profile.active_team = team
+        profile.save(update_fields=["active_team", "updated_at"])
+        TeamMembership.objects.get_or_create(
+            user=user,
+            team=team,
+            defaults={"role": TeamMembership.Role.MEMBER},
+        )
         return user
 
 

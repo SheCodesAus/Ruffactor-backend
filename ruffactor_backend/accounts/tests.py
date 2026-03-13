@@ -288,6 +288,66 @@ class AuthenticationAccessTests(APITestCase):
         self.assertEqual(response["Location"], "/auth/profile/")
 
 
+class SignUpTeamSelectionTests(APITestCase):
+    def setUp(self):
+        """Create an authenticated requester and teams for signup flow tests."""
+        self.request_user = User.objects.create_user(
+            username="signup_requester",
+            email="signup_requester@example.com",
+            password="StrongPass123!",
+        )
+        self.team = Team.objects.create(
+            name="Engineering",
+            slug="engineering",
+            description="Engineering team",
+        )
+        self.signup_url = "/auth/signup/"
+        self.client.force_authenticate(user=self.request_user)
+
+    def test_signup_requires_team_selection(self):
+        """Verify signup validation fails when no team is selected."""
+        response = self.client.post(
+            self.signup_url,
+            {
+                "username": "new_teamless_user",
+                "email": "new_teamless_user@example.com",
+                "first_name": "Teamless",
+                "last_name": "User",
+                "password": "StrongPass123!",
+                "confirm_password": "StrongPass123!",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("team_id", response.data)
+
+    def test_signup_saves_selected_team_to_profile_and_membership(self):
+        """Verify signup persists the selected team on the user profile."""
+        response = self.client.post(
+            self.signup_url,
+            {
+                "username": "new_team_user",
+                "email": "new_team_user@example.com",
+                "first_name": "New",
+                "last_name": "Member",
+                "team_id": self.team.id,
+                "password": "StrongPass123!",
+                "confirm_password": "StrongPass123!",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        created_user = User.objects.get(email="new_team_user@example.com")
+        created_profile = Profile.objects.get(user=created_user)
+
+        self.assertEqual(created_profile.active_team_id, self.team.id)
+        self.assertTrue(
+            TeamMembership.objects.filter(user=created_user, team=self.team).exists()
+        )
+
+
 class KudosApiTicketTests(APITestCase):
     def setUp(self):
         """Prepare shared fixtures for kudos API ticket coverage.
