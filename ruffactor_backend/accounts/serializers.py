@@ -455,7 +455,7 @@ class KudosWriteSerializer(serializers.ModelSerializer):
         required=False,
         write_only=True,
     )
-    # Only used when visibility="team".
+    # Team tags may be attached to kudos regardless of visibility.
     target_team_ids = serializers.PrimaryKeyRelatedField(
         queryset=Team.objects.all(),
         many=True,
@@ -488,8 +488,8 @@ class KudosWriteSerializer(serializers.ModelSerializer):
 
         Raises:
             serializers.ValidationError: If required skill tags are missing, team
-                visibility constraints fail, membership checks fail, or sender equals
-                recipient.
+                visibility requires no teams or non-member tagging is attempted, or
+                sender equals recipient.
         """
         request = self.context["request"]
         user = request.user
@@ -518,12 +518,7 @@ class KudosWriteSerializer(serializers.ModelSerializer):
                 {"target_team_ids": "Team visibility requires at least one team."}
             )
 
-        if visibility != Kudos.Visibility.TEAM and teams:
-            raise serializers.ValidationError(
-                {"target_team_ids": "target_team_ids must be empty unless visibility is team."}
-            )
-
-        if visibility == Kudos.Visibility.TEAM and not user.is_staff:
+        if teams and not user.is_staff:
             team_ids = [team.id for team in teams]
             memberships = set(
                 TeamMembership.objects.filter(

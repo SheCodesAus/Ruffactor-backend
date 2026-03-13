@@ -5,7 +5,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import Kudos, Profile, SkillCategory
+from .models import Kudos, Profile, SkillCategory, Team, TeamMembership
 
 
 User = get_user_model()
@@ -218,6 +218,21 @@ class KudosApiTicketTests(APITestCase):
             slug="teamwork",
             is_active=True,
         )
+        self.team = Team.objects.create(
+            name="Product",
+            slug="product",
+            description="Product team",
+        )
+        self.other_team = Team.objects.create(
+            name="Operations",
+            slug="operations",
+            description="Operations team",
+        )
+        TeamMembership.objects.create(
+            team=self.team,
+            user=self.sender,
+            role=TeamMembership.Role.MEMBER,
+        )
         self.inactive_skill = SkillCategory.objects.create(
             name="Legacy",
             slug="legacy",
@@ -293,6 +308,93 @@ class KudosApiTicketTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("skill_ids", response.data)
+
+    def test_post_kudos_can_save_and_display_team_tag(self):
+        """Verify team tags can be attached and returned on kudos responses."""
+        self.client.force_authenticate(user=self.sender)
+        response = self.client.post(
+            self.kudos_url,
+            {
+                "recipient": self.recipient.id,
+                "message": "Thanks, Product team",
+                "visibility": Kudos.Visibility.PUBLIC,
+                "skill_ids": [self.skill.id],
+                "target_team_ids": [self.team.id],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual([item["id"] for item in response.data["target_teams"]], [self.team.id])
+        self.assertEqual(response.data["target_teams"][0]["name"], self.team.name)
+
+    def test_post_kudos_rejects_team_tag_for_non_member(self):
+        """Verify non-staff users cannot tag teams they do not belong to."""
+        self.client.force_authenticate(user=self.sender)
+        response = self.client.post(
+            self.kudos_url,
+            {
+                "recipient": self.recipient.id,
+                "message": "I should not be able to tag this team",
+                "visibility": Kudos.Visibility.PUBLIC,
+                "skill_ids": [self.skill.id],
+                "target_team_ids": [self.other_team.id],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("target_team_ids", response.data)
+
+    def test_patch_kudos_updates_team_tag_and_displays_it(self):
+        """Verify team tags can be updated and returned in the updated payload."""
+        kudos = Kudos.objects.create(
+            sender=self.sender,
+            recipient=self.recipient,
+            message="Initial team tag",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        kudos.skills.set([self.skill])
+        kudos.target_teams.set([self.team])
+        TeamMembership.objects.create(
+            team=self.other_team,
+            user=self.sender,
+            role=TeamMembership.Role.MEMBER,
+        )
+
+        self.client.force_authenticate(user=self.sender)
+        response = self.client.patch(
+            f"{self.kudos_url}{kudos.id}/",
+            {
+                "target_team_ids": [self.other_team.id],
+                "skill_ids": [self.skill.id],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            [item["id"] for item in response.data["target_teams"]],
+            [self.other_team.id],
+        )
+
+    def test_team_visibility_still_requires_at_least_one_team_tag(self):
+        """Verify team-visible kudos still require at least one tagged team."""
+        self.client.force_authenticate(user=self.sender)
+        response = self.client.post(
+            self.kudos_url,
+            {
+                "recipient": self.recipient.id,
+                "message": "Missing tagged team",
+                "visibility": Kudos.Visibility.TEAM,
+                "skill_ids": [self.skill.id],
+                "target_team_ids": [],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("target_team_ids", response.data)
 
     def test_home_search_by_sender_and_recipient_returns_latest_first(self):
         """Verify sender/recipient search filters and default latest-first ordering.
