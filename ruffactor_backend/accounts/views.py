@@ -100,6 +100,7 @@ def _serialize_user_payload(user):
         "avatar_url": profile.avatar_url,
         "active_team": TeamSerializer(profile.active_team).data if profile.active_team else None,
         "teams": TeamSerializer(teams, many=True).data,
+        "snapshot": _build_kudos_snapshot(user),
     }
 
 
@@ -129,6 +130,14 @@ def _filter_to_current_month(queryset):
     """Limit feed querysets to kudos created during the current month."""
     month_start, next_month_start = _current_month_bounds()
     return queryset.filter(created_at__gte=month_start, created_at__lt=next_month_start)
+
+
+def _build_kudos_snapshot(user):
+    """Return aggregate kudos counts for the authenticated user's dashboard snapshot."""
+    return {
+        "kudos_given": Kudos.objects.filter(sender=user, is_archived=False).count(),
+        "kudos_received": Kudos.objects.filter(recipient=user, is_archived=False).count(),
+    }
 
 
 def _apply_kudos_filters(queryset, params):
@@ -731,6 +740,11 @@ class KudosViewSet(viewsets.ModelViewSet):
         """
         kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
+
+    @action(detail=False, methods=["get"], url_path="snapshot")
+    def snapshot(self, request):
+        """Return home-dashboard aggregate kudos counts for the current user."""
+        return Response(_build_kudos_snapshot(request.user), status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="approve")
     def approve(self, request, pk=None):

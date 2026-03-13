@@ -199,6 +199,10 @@ class AuthenticationAccessTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("token", response.data)
         self.assertEqual(response.data["token"], Token.objects.get(user=self.user).key)
+        self.assertEqual(
+            response.data["user"]["snapshot"],
+            {"kudos_given": 0, "kudos_received": 0},
+        )
 
     def test_invalid_login_returns_error_for_json_clients(self):
         """Verify invalid JSON login returns a validation error instead of redirecting."""
@@ -450,6 +454,66 @@ class KudosApiTicketTests(APITestCase):
         self.assertEqual(response.data["recipient"]["id"], self.recipient.id)
         self.assertEqual(response.data["message"], "Thanks for your support")
         self.assertEqual([item["id"] for item in response.data["skills"]], [self.skill.id])
+
+    def test_profile_includes_snapshot_counts(self):
+        """Verify profile payload includes aggregate kudos given and received totals."""
+        sent_kudos = Kudos.objects.create(
+            sender=self.sender,
+            recipient=self.recipient,
+            message="Sent kudos",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        sent_kudos.skills.set([self.skill])
+        received_kudos = Kudos.objects.create(
+            sender=self.viewer,
+            recipient=self.sender,
+            message="Received kudos",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        received_kudos.skills.set([self.skill])
+
+        self.client.force_authenticate(user=self.sender)
+        response = self.client.get("/auth/profile/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data["snapshot"],
+            {"kudos_given": 1, "kudos_received": 1},
+        )
+
+    def test_kudos_snapshot_endpoint_returns_updated_counts(self):
+        """Verify the home snapshot endpoint returns current non-archived totals."""
+        current = Kudos.objects.create(
+            sender=self.sender,
+            recipient=self.recipient,
+            message="Current sent kudos",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        current.skills.set([self.skill])
+        received = Kudos.objects.create(
+            sender=self.viewer,
+            recipient=self.sender,
+            message="Current received kudos",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        received.skills.set([self.skill])
+        archived = Kudos.objects.create(
+            sender=self.sender,
+            recipient=self.viewer,
+            message="Archived kudos should not count",
+            visibility=Kudos.Visibility.PUBLIC,
+            is_archived=True,
+        )
+        archived.skills.set([self.skill])
+
+        self.client.force_authenticate(user=self.sender)
+        response = self.client.get(f"{self.kudos_url}snapshot/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data,
+            {"kudos_given": 1, "kudos_received": 1},
+        )
 
     def test_post_kudos_rejects_inactive_skill_tag(self):
         """Verify kudos creation rejects inactive skill IDs.
