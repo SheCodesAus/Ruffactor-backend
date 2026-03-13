@@ -103,6 +103,66 @@ def _serialize_user_payload(user):
     }
 
 
+def _build_user_lookup_query(prefix, value):
+    """Build a flexible user lookup query for sender/recipient filtering."""
+    return (
+        Q(**{f"{prefix}__username__icontains": value})
+        | Q(**{f"{prefix}__email__icontains": value})
+        | Q(**{f"{prefix}__first_name__icontains": value})
+        | Q(**{f"{prefix}__last_name__icontains": value})
+        | Q(**{f"{prefix}__profile__display_name__icontains": value})
+    )
+
+
+def _apply_kudos_filters(queryset, params):
+    """Apply shared kudos list filters used by authenticated feed endpoints."""
+    # List endpoint query params supported by frontend:
+    # skill, sender, recipient, team, visibility, approved, archived, q, ordering
+    skill = params.get("skill")
+    sender = params.get("sender")
+    recipient = params.get("recipient")
+    team = params.get("team")
+    visibility = params.get("visibility")
+    approved = params.get("approved")
+    archived = params.get("archived")
+    search_query = params.get("q")
+    ordering = params.get("ordering", "-created_at")
+
+    if skill:
+        queryset = queryset.filter(skills__id=skill)
+    if sender:
+        if sender.isdigit():
+            queryset = queryset.filter(sender_id=sender)
+        else:
+            queryset = queryset.filter(_build_user_lookup_query("sender", sender))
+    if recipient:
+        if recipient.isdigit():
+            queryset = queryset.filter(recipient_id=recipient)
+        else:
+            queryset = queryset.filter(_build_user_lookup_query("recipient", recipient))
+    if team:
+        queryset = queryset.filter(target_teams__id=team)
+    if visibility in {
+        Kudos.Visibility.PUBLIC,
+        Kudos.Visibility.TEAM,
+        Kudos.Visibility.PRIVATE,
+    }:
+        queryset = queryset.filter(visibility=visibility)
+    if approved in {"true", "false"}:
+        queryset = queryset.filter(is_approved=(approved == "true"))
+    if archived in {"true", "false"}:
+        queryset = queryset.filter(is_archived=(archived == "true"))
+    if search_query:
+        queryset = queryset.filter(
+            Q(message__icontains=search_query)
+            | _build_user_lookup_query("sender", search_query)
+            | _build_user_lookup_query("recipient", search_query)
+        )
+    if ordering not in {"created_at", "-created_at"}:
+        ordering = "-created_at"
+    return queryset.order_by(ordering).distinct()
+
+
 class SignUpView(generics.CreateAPIView):
     serializer_class = SignUpSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -579,41 +639,7 @@ class KudosViewSet(viewsets.ModelViewSet):
         Returns:
             QuerySet[Kudos]: Filtered and ordered queryset.
         """
-        # List endpoint query params supported by frontend:
-        # skill, sender, recipient, team, visibility, approved, archived, q, ordering
-        skill = params.get("skill")
-        sender = params.get("sender")
-        recipient = params.get("recipient")
-        team = params.get("team")
-        visibility = params.get("visibility")
-        approved = params.get("approved")
-        archived = params.get("archived")
-        search_query = params.get("q")
-        ordering = params.get("ordering", "-created_at")
-
-        if skill:
-            queryset = queryset.filter(skills__id=skill)
-        if sender:
-            queryset = queryset.filter(sender_id=sender)
-        if recipient:
-            queryset = queryset.filter(recipient_id=recipient)
-        if team:
-            queryset = queryset.filter(target_teams__id=team)
-        if visibility in {
-            Kudos.Visibility.PUBLIC,
-            Kudos.Visibility.TEAM,
-            Kudos.Visibility.PRIVATE,
-        }:
-            queryset = queryset.filter(visibility=visibility)
-        if approved in {"true", "false"}:
-            queryset = queryset.filter(is_approved=(approved == "true"))
-        if archived in {"true", "false"}:
-            queryset = queryset.filter(is_archived=(archived == "true"))
-        if search_query:
-            queryset = queryset.filter(message__icontains=search_query)
-        if ordering not in {"created_at", "-created_at"}:
-            ordering = "-created_at"
-        return queryset.order_by(ordering).distinct()
+        return _apply_kudos_filters(queryset, params)
 
     def get_serializer_class(self):
         """Select serializer class based on action read/write behavior.
@@ -886,24 +912,4 @@ class PublicKudosListView(generics.ListAPIView):
             .filter(visibility=Kudos.Visibility.PUBLIC, is_archived=False)
             .distinct()
         )
-        skill = self.request.query_params.get("skill")
-        sender = self.request.query_params.get("sender")
-        recipient = self.request.query_params.get("recipient")
-        team = self.request.query_params.get("team")
-        search_query = self.request.query_params.get("q")
-        ordering = self.request.query_params.get("ordering", "-created_at")
-
-        if skill:
-            queryset = queryset.filter(skills__id=skill)
-        if sender:
-            queryset = queryset.filter(sender_id=sender)
-        if recipient:
-            queryset = queryset.filter(recipient_id=recipient)
-        if team:
-            queryset = queryset.filter(target_teams__id=team)
-        if search_query:
-            queryset = queryset.filter(message__icontains=search_query)
-        if ordering not in {"created_at", "-created_at"}:
-            ordering = "-created_at"
-
-        return queryset.order_by(ordering).distinct()
+        return _apply_kudos_filters(queryset, self.request.query_params)

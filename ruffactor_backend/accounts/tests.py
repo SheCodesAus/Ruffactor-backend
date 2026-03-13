@@ -5,7 +5,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import Kudos, SkillCategory
+from .models import Kudos, Profile, SkillCategory
 
 
 User = get_user_model()
@@ -328,6 +328,109 @@ class KudosApiTicketTests(APITestCase):
         self.assertEqual(response.data["count"], 2)
         self.assertEqual(response.data["results"][0]["id"], newer.id)
         self.assertEqual(response.data["results"][1]["id"], older.id)
+
+    def test_home_search_query_matches_sender_and_recipient_text(self):
+        """Verify general home search can find kudos by people fields, not just message."""
+        sender_match = Kudos.objects.create(
+            sender=self.sender,
+            recipient=self.recipient,
+            message="Message without search term",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        sender_match.skills.set([self.skill])
+        recipient_match = Kudos.objects.create(
+            sender=self.viewer,
+            recipient=self.recipient,
+            message="Another message without name text",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        recipient_match.skills.set([self.skill])
+        unrelated = Kudos.objects.create(
+            sender=self.viewer,
+            recipient=self.staff,
+            message="Completely unrelated post",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        unrelated.skills.set([self.skill])
+
+        self.client.force_authenticate(user=self.sender)
+
+        sender_response = self.client.get(f"{self.kudos_url}?q={self.sender.username}")
+        sender_ids = [item["id"] for item in sender_response.data["results"]]
+
+        recipient_response = self.client.get(f"{self.kudos_url}?q={self.recipient.email}")
+        recipient_ids = [item["id"] for item in recipient_response.data["results"]]
+
+        self.assertEqual(sender_response.status_code, status.HTTP_200_OK)
+        self.assertIn(sender_match.id, sender_ids)
+        self.assertNotIn(unrelated.id, sender_ids)
+
+        self.assertEqual(recipient_response.status_code, status.HTTP_200_OK)
+        self.assertIn(sender_match.id, recipient_ids)
+        self.assertIn(recipient_match.id, recipient_ids)
+        self.assertNotIn(unrelated.id, recipient_ids)
+
+    def test_home_search_sender_and_recipient_text_filters_match_users(self):
+        """Verify sender/recipient query params accept user text values as filters."""
+        matching = Kudos.objects.create(
+            sender=self.sender,
+            recipient=self.recipient,
+            message="Match both people filters",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        matching.skills.set([self.skill])
+        sender_only = Kudos.objects.create(
+            sender=self.sender,
+            recipient=self.staff,
+            message="Match sender only",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        sender_only.skills.set([self.skill])
+        unrelated = Kudos.objects.create(
+            sender=self.viewer,
+            recipient=self.staff,
+            message="Match neither filter",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        unrelated.skills.set([self.skill])
+
+        self.client.force_authenticate(user=self.sender)
+        response = self.client.get(
+            f"{self.kudos_url}?sender={self.sender.username}&recipient={self.recipient.email}"
+        )
+        result_ids = [item["id"] for item in response.data["results"]]
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn(matching.id, result_ids)
+        self.assertNotIn(sender_only.id, result_ids)
+        self.assertNotIn(unrelated.id, result_ids)
+
+    def test_home_search_query_matches_profile_display_name(self):
+        """Verify general home search matches sender/recipient profile display names."""
+        Profile.objects.create(user=self.recipient, display_name="Bridget Tang")
+
+        matching = Kudos.objects.create(
+            sender=self.sender,
+            recipient=self.recipient,
+            message="Profile-based search result",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        matching.skills.set([self.skill])
+        unrelated = Kudos.objects.create(
+            sender=self.viewer,
+            recipient=self.staff,
+            message="No profile match here",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        unrelated.skills.set([self.skill])
+
+        self.client.force_authenticate(user=self.sender)
+        response = self.client.get(f"{self.kudos_url}?q=Bridget")
+        result_ids = [item["id"] for item in response.data["results"]]
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn(matching.id, result_ids)
+        self.assertNotIn(unrelated.id, result_ids)
 
     def test_admin_can_view_private_kudos_but_non_member_cannot(self):
         """Verify visibility rules for private kudos between staff and non-members.
