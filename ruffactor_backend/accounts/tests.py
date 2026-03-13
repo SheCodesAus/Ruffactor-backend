@@ -15,6 +15,20 @@ from .models import Kudos, Profile, SkillCategory, Team, TeamMembership
 User = get_user_model()
 
 
+class TeamModelSetupTests(TestCase):
+    def test_default_teams_are_seeded(self):
+        """Verify the required default team records exist after migrations run."""
+        expected_names = {
+            "Account Management",
+            "Sales",
+            "Tech",
+            "Management",
+            "Administration",
+        }
+
+        self.assertTrue(expected_names.issubset(set(Team.objects.values_list("name", flat=True))))
+
+
 class AdminUserManagementTests(TestCase):
     def setUp(self):
         """Create an admin user and a target user for Django admin management tests."""
@@ -308,8 +322,8 @@ class SignUpTeamSelectionTests(APITestCase):
         self.signup_url = "/auth/signup/"
         self.client.force_authenticate(user=self.request_user)
 
-    def test_signup_requires_team_selection(self):
-        """Verify signup validation fails when no team is selected."""
+    def test_signup_allows_missing_team_selection(self):
+        """Verify signup succeeds when no team is selected."""
         response = self.client.post(
             self.signup_url,
             {
@@ -323,8 +337,12 @@ class SignUpTeamSelectionTests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("team_id", response.data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        created_user = User.objects.get(email="new_teamless_user@example.com")
+        created_profile, _ = Profile.objects.get_or_create(user=created_user)
+
+        self.assertIsNone(created_profile.active_team_id)
+        self.assertFalse(TeamMembership.objects.filter(user=created_user).exists())
 
     def test_signup_saves_selected_team_to_profile_and_membership(self):
         """Verify signup persists the selected team on the user profile."""
@@ -350,6 +368,63 @@ class SignUpTeamSelectionTests(APITestCase):
         self.assertTrue(
             TeamMembership.objects.filter(user=created_user, team=self.team).exists()
         )
+
+
+class TeamMembershipRuleTests(APITestCase):
+    def setUp(self):
+        """Create users and teams used to verify one-team-per-user enforcement."""
+        self.staff = User.objects.create_user(
+            username="team_admin",
+            email="team_admin@example.com",
+            password="StrongPass123!",
+            is_staff=True,
+        )
+        self.member = User.objects.create_user(
+            username="team_member",
+            email="team_member@example.com",
+            password="StrongPass123!",
+        )
+        self.sales_team = Team.objects.create(
+            name="Regional Sales",
+            slug="regional-sales",
+            description="Regional sales team",
+        )
+        self.tech_team = Team.objects.create(
+            name="Platform Tech",
+            slug="platform-tech",
+            description="Platform tech team",
+        )
+        TeamMembership.objects.create(
+            user=self.member,
+            team=self.sales_team,
+            role=TeamMembership.Role.MEMBER,
+        )
+        profile, _ = Profile.objects.get_or_create(user=self.member)
+        profile.active_team = self.sales_team
+        profile.save(update_fields=["active_team", "updated_at"])
+
+    def test_add_member_allows_multiple_team_memberships(self):
+        """Verify assigning a new team adds membership without removing existing teams."""
+        self.client.force_authenticate(user=self.staff)
+        response = self.client.post(
+            f"/api/teams/{self.tech_team.id}/members/",
+            {
+                "user_id": self.member.id,
+                "role": TeamMembership.Role.MEMBER,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(TeamMembership.objects.filter(user=self.member).count(), 2)
+        self.assertTrue(
+            TeamMembership.objects.filter(user=self.member, team=self.sales_team).exists()
+        )
+        self.assertTrue(
+            TeamMembership.objects.filter(user=self.member, team=self.tech_team).exists()
+        )
+        self.member.profile.refresh_from_db()
+        self.assertEqual(self.member.profile.active_team_id, self.sales_team.id)
 
 
 class KudosApiTicketTests(APITestCase):
@@ -584,11 +659,10 @@ class KudosApiTicketTests(APITestCase):
         )
         kudos.skills.set([self.skill])
         kudos.target_teams.set([self.team])
-        TeamMembership.objects.create(
-            team=self.other_team,
-            user=self.sender,
-            role=TeamMembership.Role.MEMBER,
-        )
+        TeamMembership.objects.filter(user=self.sender).update(team=self.other_team)
+        sender_profile, _ = Profile.objects.get_or_create(user=self.sender)
+        sender_profile.active_team = self.other_team
+        sender_profile.save(update_fields=["active_team", "updated_at"])
 
         self.client.force_authenticate(user=self.sender)
         response = self.client.patch(

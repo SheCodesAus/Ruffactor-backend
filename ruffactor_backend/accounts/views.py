@@ -62,6 +62,22 @@ def _user_teams_queryset(user):
     return Team.objects.filter(memberships__user=user).order_by("name").distinct()
 
 
+def _ensure_active_team(user, team):
+    """Set an active team only when the user does not already have one selected."""
+    profile, _ = Profile.objects.get_or_create(user=user)
+    if profile.active_team_id is None and team is not None:
+        profile.active_team = team
+        profile.save(update_fields=["active_team", "updated_at"])
+
+
+def _clear_active_team_if_removed(user, team):
+    """Clear the active team when the removed membership was currently selected."""
+    profile, _ = Profile.objects.get_or_create(user=user)
+    if profile.active_team_id == getattr(team, "id", None):
+        profile.active_team = None
+        profile.save(update_fields=["active_team", "updated_at"])
+
+
 def _get_profile_and_teams(user):
     """Return profile and membership teams, correcting stale active-team state.
 
@@ -481,11 +497,13 @@ class TeamViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, viewsets.Gener
             serializer (TeamSerializer): Validated serializer for create action.
         """
         team = serializer.save()
-        TeamMembership.objects.get_or_create(
+        membership, created = TeamMembership.objects.get_or_create(
             team=team,
             user=self.request.user,
             defaults={"role": TeamMembership.Role.ADMIN},
         )
+        if created and membership.role == TeamMembership.Role.ADMIN:
+            _ensure_active_team(self.request.user, team)
 
     def _assert_team_admin_or_staff(self, team):
         """Validate that requester can manage memberships for the team.
@@ -527,6 +545,8 @@ class TeamViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, viewsets.Gener
             user=serializer.validated_data["user"],
             defaults={"role": serializer.validated_data["role"]},
         )
+        if created:
+            _ensure_active_team(serializer.validated_data["user"], team)
         response_serializer = TeamMembershipSerializer(membership)
         return Response(
             response_serializer.data,
@@ -555,6 +575,7 @@ class TeamViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, viewsets.Gener
         membership = TeamMembership.objects.filter(team=team, user_id=user_id).first()
         if not membership:
             return Response(status=status.HTTP_404_NOT_FOUND)
+        _clear_active_team_if_removed(membership.user, team)
         membership.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -579,6 +600,7 @@ class TeamViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, viewsets.Gener
         membership = TeamMembership.objects.filter(team=team, user_id=user_id).first()
         if not membership:
             return Response(status=status.HTTP_404_NOT_FOUND)
+        _clear_active_team_if_removed(membership.user, team)
         membership.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 

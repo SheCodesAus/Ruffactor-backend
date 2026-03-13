@@ -15,7 +15,8 @@ class SignUpSerializer(serializers.ModelSerializer):
     team_id = serializers.PrimaryKeyRelatedField(
         queryset=Team.objects.all(),
         source="team",
-        required=True,
+        required=False,
+        allow_null=True,
         write_only=True,
     )
 
@@ -86,18 +87,19 @@ class SignUpSerializer(serializers.ModelSerializer):
         """
         validated_data.pop("confirm_password")
         password = validated_data.pop("password")
-        team = validated_data.pop("team")
+        team = validated_data.pop("team", None)
         user = User(**validated_data)
         user.set_password(password)
         user.save()
-        profile, _ = Profile.objects.get_or_create(user=user)
-        profile.active_team = team
-        profile.save(update_fields=["active_team", "updated_at"])
-        TeamMembership.objects.get_or_create(
-            user=user,
-            team=team,
-            defaults={"role": TeamMembership.Role.MEMBER},
-        )
+        if team is not None:
+            profile, _ = Profile.objects.get_or_create(user=user)
+            profile.active_team = team
+            profile.save(update_fields=["active_team", "updated_at"])
+            TeamMembership.objects.get_or_create(
+                user=user,
+                team=team,
+                defaults={"role": TeamMembership.Role.MEMBER},
+            )
         return user
 
 
