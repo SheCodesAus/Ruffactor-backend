@@ -1,6 +1,9 @@
 from datetime import timedelta
 
+from django.contrib.admin.sites import site
 from django.contrib.auth import get_user_model
+from django.test import TestCase
+from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -9,6 +12,73 @@ from .models import Kudos, Profile, SkillCategory, Team, TeamMembership
 
 
 User = get_user_model()
+
+
+class AdminUserManagementTests(TestCase):
+    def setUp(self):
+        """Create an admin user and a target user for Django admin management tests."""
+        self.admin_user = User.objects.create_superuser(
+            username="site_admin",
+            email="site_admin@example.com",
+            password="StrongPass123!",
+        )
+        self.target_user = User.objects.create_user(
+            username="managed_user",
+            email="managed_user@example.com",
+            password="StrongPass123!",
+            first_name="Managed",
+            last_name="Person",
+            is_active=True,
+        )
+        self.client.force_login(self.admin_user)
+
+    def test_user_model_uses_project_admin_registration(self):
+        """Verify user management is explicitly configured in the project admin."""
+        registered_admin = site._registry[User]
+
+        self.assertIn("is_active", registered_admin.list_display)
+        self.assertIn("email", registered_admin.search_fields)
+
+    def test_admin_user_changelist_shows_users(self):
+        """Verify admins can open the user list in Django admin."""
+        response = self.client.get(reverse("admin:auth_user_changelist"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertContains(response, "managed_user")
+        self.assertContains(response, "managed_user@example.com")
+
+    def test_admin_can_update_user_active_state(self):
+        """Verify admins can change a user from active to inactive in admin."""
+        change_url = reverse("admin:auth_user_change", args=[self.target_user.pk])
+        response = self.client.post(
+            change_url,
+            {
+                "username": self.target_user.username,
+                "email": self.target_user.email,
+                "first_name": self.target_user.first_name,
+                "last_name": self.target_user.last_name,
+                "password": self.target_user.password,
+                "is_active": "",
+                "is_staff": "",
+                "is_superuser": "",
+                "groups": [],
+                "user_permissions": [],
+                "last_login_0": "",
+                "last_login_1": "",
+                "date_joined_0": self.target_user.date_joined.strftime("%Y-%m-%d"),
+                "date_joined_1": self.target_user.date_joined.strftime("%H:%M:%S"),
+                "_save": "Save",
+                "profile-TOTAL_FORMS": "0",
+                "profile-INITIAL_FORMS": "0",
+                "profile-MIN_NUM_FORMS": "0",
+                "profile-MAX_NUM_FORMS": "1",
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.target_user.refresh_from_db()
+        self.assertFalse(self.target_user.is_active)
 
 
 class UserAccountViewTests(APITestCase):
