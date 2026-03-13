@@ -5,6 +5,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
+from rest_framework.authtoken.models import Token
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -197,6 +198,29 @@ class AuthenticationAccessTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("token", response.data)
+        self.assertEqual(response.data["token"], Token.objects.get(user=self.user).key)
+
+    def test_invalid_login_returns_error_for_json_clients(self):
+        """Verify invalid JSON login returns a validation error instead of redirecting."""
+        response = self.client.post(
+            self.login_url,
+            {"email": self.user.email, "password": "wrong-password"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("non_field_errors", response.data)
+
+    def test_invalid_login_renders_error_for_browser_requests(self):
+        """Verify invalid browser login keeps the user on the login page with an error."""
+        response = self.client.post(
+            self.login_url,
+            {"email": self.user.email, "password": "wrong-password"},
+            HTTP_ACCEPT="text/html",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertContains(response, "Invalid email or password.", status_code=400)
 
     def test_login_page_renders_for_browser_requests(self):
         """Verify browser requests can load the backend login page."""
@@ -238,6 +262,15 @@ class AuthenticationAccessTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_302_FOUND)
         self.assertEqual(response["Location"], "/auth/login/?next=%2Fauth%2Fprofile%2F")
+
+    def test_api_requests_do_not_redirect_to_login_page(self):
+        """Verify API clients get auth errors instead of HTML redirects."""
+        response = self.client.get("/auth/profile/", HTTP_ACCEPT="application/json")
+
+        self.assertIn(
+            response.status_code,
+            {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN},
+        )
 
     def test_browser_login_redirects_back_to_requested_page(self):
         """Verify the HTML login form can return the user to the original path."""
@@ -309,6 +342,7 @@ class KudosApiTicketTests(APITestCase):
             is_active=False,
         )
         self.kudos_url = "/api/kudos/"
+        self.public_kudos_url = "/api/kudos/public/"
 
     def test_post_kudos_requires_at_least_one_predefined_skill(self):
         """Verify kudos creation fails when `skill_ids` is missing.
@@ -500,6 +534,94 @@ class KudosApiTicketTests(APITestCase):
         self.assertEqual(response.data["count"], 2)
         self.assertEqual(response.data["results"][0]["id"], newer.id)
         self.assertEqual(response.data["results"][1]["id"], older.id)
+
+    def test_feed_only_returns_kudos_from_current_month(self):
+        """Verify the main feed excludes kudos outside the current calendar month."""
+        now = timezone.now()
+        current_month_kudos = Kudos.objects.create(
+            sender=self.sender,
+            recipient=self.recipient,
+            message="Current month kudos",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        current_month_kudos.skills.set([self.skill])
+
+        previous_month_kudos = Kudos.objects.create(
+            sender=self.sender,
+            recipient=self.recipient,
+            message="Previous month kudos",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        previous_month_kudos.skills.set([self.skill])
+
+        if now.month == 1:
+            previous_month = now.replace(year=now.year - 1, month=12, day=15)
+        else:
+            previous_month = now.replace(month=now.month - 1, day=15)
+
+        next_month = (
+            now.replace(year=now.year + 1, month=1, day=1)
+            if now.month == 12
+            else now.replace(month=now.month + 1, day=1)
+        )
+
+        Kudos.objects.filter(pk=current_month_kudos.pk).update(
+            created_at=now.replace(day=min(now.day, 15))
+        )
+        Kudos.objects.filter(pk=previous_month_kudos.pk).update(created_at=previous_month)
+
+        future_kudos = Kudos.objects.create(
+            sender=self.sender,
+            recipient=self.recipient,
+            message="Future month kudos",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        future_kudos.skills.set([self.skill])
+        Kudos.objects.filter(pk=future_kudos.pk).update(created_at=next_month)
+
+        self.client.force_authenticate(user=self.sender)
+        response = self.client.get(self.kudos_url)
+        result_ids = [item["id"] for item in response.data["results"]]
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn(current_month_kudos.id, result_ids)
+        self.assertNotIn(previous_month_kudos.id, result_ids)
+        self.assertNotIn(future_kudos.id, result_ids)
+
+    def test_public_feed_only_returns_current_month_kudos(self):
+        """Verify the public feed applies the same current-month window."""
+        now = timezone.now()
+        current_month_kudos = Kudos.objects.create(
+            sender=self.sender,
+            recipient=self.recipient,
+            message="Public current month kudos",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        current_month_kudos.skills.set([self.skill])
+
+        old_public_kudos = Kudos.objects.create(
+            sender=self.sender,
+            recipient=self.recipient,
+            message="Old public kudos",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        old_public_kudos.skills.set([self.skill])
+
+        boundary_previous_month = (
+            now.replace(year=now.year - 1, month=12, day=28)
+            if now.month == 1
+            else now.replace(month=now.month - 1, day=28)
+        )
+
+        Kudos.objects.filter(pk=old_public_kudos.pk).update(created_at=boundary_previous_month)
+
+        self.client.force_authenticate(user=self.sender)
+        response = self.client.get(self.public_kudos_url)
+        result_ids = [item["id"] for item in response.data["results"]]
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn(current_month_kudos.id, result_ids)
+        self.assertNotIn(old_public_kudos.id, result_ids)
 
     def test_home_search_query_matches_sender_and_recipient_text(self):
         """Verify general home search can find kudos by people fields, not just message."""

@@ -114,10 +114,28 @@ def _build_user_lookup_query(prefix, value):
     )
 
 
+def _current_month_bounds():
+    """Return the inclusive/exclusive datetime bounds for the current month."""
+    now = timezone.now()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if month_start.month == 12:
+        next_month_start = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month_start = month_start.replace(month=month_start.month + 1)
+    return month_start, next_month_start
+
+
+def _filter_to_current_month(queryset):
+    """Limit feed querysets to kudos created during the current month."""
+    month_start, next_month_start = _current_month_bounds()
+    return queryset.filter(created_at__gte=month_start, created_at__lt=next_month_start)
+
+
 def _apply_kudos_filters(queryset, params):
     """Apply shared kudos list filters used by authenticated feed endpoints."""
     # List endpoint query params supported by frontend:
     # skill, sender, recipient, team, visibility, approved, archived, q, ordering
+    queryset = _filter_to_current_month(queryset)
     skill = params.get("skill")
     sender = params.get("sender")
     recipient = params.get("recipient")
