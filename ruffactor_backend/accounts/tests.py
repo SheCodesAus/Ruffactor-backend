@@ -128,6 +128,13 @@ class AuthenticationAccessTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("token", response.data)
 
+    def test_login_page_renders_for_browser_requests(self):
+        """Verify browser requests can load the backend login page."""
+        response = self.client.get(self.login_url, HTTP_ACCEPT="text/html")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertContains(response, "Log in")
+
     def test_signup_requires_authentication(self):
         """Verify signup endpoint is no longer publicly accessible."""
         response = self.client.post(
@@ -154,6 +161,28 @@ class AuthenticationAccessTests(APITestCase):
             response.status_code,
             {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN},
         )
+
+    def test_browser_requests_redirect_to_login_page(self):
+        """Verify unauthorized browser navigation redirects to login."""
+        response = self.client.get("/auth/profile/", HTTP_ACCEPT="text/html")
+
+        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
+        self.assertEqual(response["Location"], "/auth/login/?next=%2Fauth%2Fprofile%2F")
+
+    def test_browser_login_redirects_back_to_requested_page(self):
+        """Verify the HTML login form can return the user to the original path."""
+        response = self.client.post(
+            f"{self.login_url}?next=/auth/profile/",
+            {
+                "email": self.user.email,
+                "password": "StrongPass123!",
+                "next": "/auth/profile/",
+            },
+            HTTP_ACCEPT="text/html",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
+        self.assertEqual(response["Location"], "/auth/profile/")
 
 
 class KudosApiTicketTests(APITestCase):

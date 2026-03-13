@@ -1,10 +1,12 @@
 import csv
-from django.http import HttpResponse
-from django.shortcuts import get_object_or_404
+from django.conf import settings
 from django.contrib.auth import login as auth_login, logout as auth_logout, update_session_auth_hash
+from django.http import HttpResponse
+from django.shortcuts import get_object_or_404, redirect, render
 from django.db.models import Q
 from django.db.models.deletion import ProtectedError
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from rest_framework import generics, mixins, permissions, status, viewsets
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
@@ -27,6 +29,25 @@ from .serializers import (
     TeamMembershipWriteSerializer,
     TeamSerializer,
 )
+
+
+def _request_prefers_html(request):
+    """Return True when the request is a browser navigation or form post."""
+    accept_header = request.headers.get("Accept", "")
+    content_type = request.content_type or ""
+    return "text/html" in accept_header or content_type == "application/x-www-form-urlencoded"
+
+
+def _get_safe_next_url(request):
+    """Return a safe post-login redirect target for browser flows."""
+    next_url = request.data.get("next") or request.query_params.get("next")
+    if next_url and url_has_allowed_host_and_scheme(
+        next_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return next_url
+    return "/auth/profile/"
 
 
 def _user_teams_queryset(user):
@@ -90,6 +111,19 @@ class SignUpView(generics.CreateAPIView):
 class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
 
+    def get(self, request):
+        """Render a simple backend login page for browser redirects."""
+        next_url = _get_safe_next_url(request)
+        if request.user.is_authenticated:
+            return redirect(next_url)
+        return render(
+            request,
+            "accounts/login.html",
+            {
+                "next": next_url,
+            },
+        )
+
     def post(self, request):
         """Authenticate user and return token plus hydrated user payload.
 
@@ -101,7 +135,20 @@ class LoginView(APIView):
             Response: 200 response with auth token and serialized user data.
         """
         serializer = LoginSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if _request_prefers_html(request):
+            if not serializer.is_valid():
+                return render(
+                    request,
+                    "accounts/login.html",
+                    {
+                        "next": _get_safe_next_url(request),
+                        "error": "Invalid email or password.",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            serializer.is_valid(raise_exception=True)
+
         user = serializer.validated_data["user"]
         auth_login(request, user)
         profile, _ = _get_profile_and_teams(user)
@@ -109,6 +156,18 @@ class LoginView(APIView):
             profile.active_team = serializer.validated_data["team"]
             profile.save(update_fields=["active_team", "updated_at"])
         token, _ = Token.objects.get_or_create(user=user)
+        next_url = _get_safe_next_url(request)
+
+        if _request_prefers_html(request):
+            response = redirect(next_url)
+            response.set_cookie(
+                "auth_token",
+                token.key,
+                httponly=True,
+                samesite="Lax",
+                secure=not settings.DEBUG,
+            )
+            return response
 
         return Response(
             {
