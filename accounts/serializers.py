@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model, password_validation
 from django.utils.text import slugify
 from rest_framework import serializers
@@ -6,6 +7,15 @@ from .models import Kudos, KudosComment, Profile, SkillCategory, Team, TeamMembe
 
 
 User = get_user_model()
+PIXEL_PULSE_EMAIL_DOMAIN = getattr(settings, "PIXEL_PULSE_EMAIL_DOMAIN", "pixelpulse.com").lower()
+MAX_KUDOS_RECIPIENTS = 5
+
+
+def _validate_pixel_pulse_email(email):
+    """Ensure the email belongs to the allowed Pixel Pulse domain."""
+    if not email.endswith(f"@{PIXEL_PULSE_EMAIL_DOMAIN}"):
+        raise serializers.ValidationError("Please use your Pixel Pulse email address.")
+    return email
 
 
 class SignUpSerializer(serializers.ModelSerializer):
@@ -47,6 +57,7 @@ class SignUpSerializer(serializers.ModelSerializer):
             serializers.ValidationError: If another user already uses this email.
         """
         normalized = value.strip().lower()
+        _validate_pixel_pulse_email(normalized)
 
         if User.objects.filter(email__iexact=normalized).exists():
             raise serializers.ValidationError("A user with this email already exists.")
@@ -176,6 +187,7 @@ class UserAccountPatchSerializer(serializers.Serializer):
             serializers.ValidationError: If email already exists on another account.
         """
         normalized = value.strip().lower()
+        _validate_pixel_pulse_email(normalized)
         user = self.instance
         if User.objects.filter(email__iexact=normalized).exclude(pk=user.pk).exists():
             raise serializers.ValidationError("A user with this email already exists.")
@@ -435,10 +447,20 @@ class SkillCategorySerializer(serializers.ModelSerializer):
 class KudosReadSerializer(serializers.ModelSerializer):
     sender = UserSummarySerializer(read_only=True)
     recipient = UserSummarySerializer(read_only=True)
+    recipients = serializers.SerializerMethodField()
     approved_by = UserSummarySerializer(read_only=True)
     archived_by = UserSummarySerializer(read_only=True)
     skills = SkillCategorySerializer(many=True, read_only=True)
     target_teams = TeamSerializer(many=True, read_only=True)
+
+    def get_recipients(self, obj):
+        """Return all recipients, falling back to the legacy single recipient field."""
+        recipients = list(obj.recipients.all())
+        if recipients:
+            return UserSummarySerializer(recipients, many=True).data
+        if obj.recipient_id:
+            return UserSummarySerializer([obj.recipient], many=True).data
+        return []
 
     class Meta:
         model = Kudos
@@ -446,6 +468,7 @@ class KudosReadSerializer(serializers.ModelSerializer):
             "id",
             "sender",
             "recipient",
+            "recipients",
             "message",
             "link_url",
             "media_url",
@@ -465,6 +488,17 @@ class KudosReadSerializer(serializers.ModelSerializer):
 
 
 class KudosWriteSerializer(serializers.ModelSerializer):
+    recipient = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+    recipient_ids = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        many=True,
+        required=False,
+        write_only=True,
+    )
     # Frontend sends a list of active predefined skill IDs (required by validation).
     skill_ids = serializers.PrimaryKeyRelatedField(
         queryset=SkillCategory.objects.filter(is_active=True),
@@ -485,6 +519,7 @@ class KudosWriteSerializer(serializers.ModelSerializer):
         fields = (
             "id",
             "recipient",
+            "recipient_ids",
             "message",
             "link_url",
             "media_url",
@@ -548,9 +583,38 @@ class KudosWriteSerializer(serializers.ModelSerializer):
                     {"target_team_ids": "You must belong to all targeted teams."}
                 )
 
-        recipient = attrs.get("recipient", getattr(instance, "recipient", None))
-        if recipient is not None and recipient == user:
-            raise serializers.ValidationError({"recipient": "Sender cannot be recipient."})
+        raw_recipients = attrs.get("recipient_ids")
+        if raw_recipients is None and "recipient" in attrs:
+            raw_recipients = [attrs["recipient"]]
+        elif raw_recipients is None and instance is not None:
+            raw_recipients = list(instance.recipients.all())
+            if not raw_recipients and getattr(instance, "recipient_id", None):
+                raw_recipients = [instance.recipient]
+
+        if not raw_recipients:
+            raise serializers.ValidationError(
+                {"recipient_ids": "At least one recipient is required."}
+            )
+
+        deduplicated_recipients = []
+        seen_recipient_ids = set()
+        for recipient in raw_recipients:
+            if recipient.id in seen_recipient_ids:
+                continue
+            deduplicated_recipients.append(recipient)
+            seen_recipient_ids.add(recipient.id)
+
+        if user in deduplicated_recipients:
+            raise serializers.ValidationError(
+                {"recipient_ids": "Sender cannot be one of the recipients."}
+            )
+
+        if len(deduplicated_recipients) > MAX_KUDOS_RECIPIENTS:
+            raise serializers.ValidationError(
+                {"recipient_ids": "You can select up to 5 recipients per kudos."}
+            )
+
+        attrs["resolved_recipients"] = deduplicated_recipients
 
         return attrs
 
@@ -563,9 +627,17 @@ class KudosWriteSerializer(serializers.ModelSerializer):
         Returns:
             Kudos: Newly created kudos owned by the authenticated sender.
         """
+        recipients = validated_data.pop("resolved_recipients")
+        validated_data.pop("recipient_ids", None)
+        validated_data.pop("recipient", None)
         skill_ids = validated_data.pop("skill_ids", [])
         target_team_ids = validated_data.pop("target_team_ids", [])
-        kudos = Kudos.objects.create(sender=self.context["request"].user, **validated_data)
+        kudos = Kudos.objects.create(
+            sender=self.context["request"].user,
+            recipient=recipients[0],
+            **validated_data,
+        )
+        kudos.recipients.set(recipients)
         kudos.skills.set(skill_ids)
         kudos.target_teams.set(target_team_ids)
         return kudos
@@ -580,12 +652,21 @@ class KudosWriteSerializer(serializers.ModelSerializer):
         Returns:
             Kudos: Updated kudos instance.
         """
+        recipients = validated_data.pop("resolved_recipients", None)
+        validated_data.pop("recipient_ids", None)
         skill_ids = validated_data.pop("skill_ids", None)
         target_team_ids = validated_data.pop("target_team_ids", None)
+        primary_recipient = validated_data.pop("recipient", None)
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
+        if recipients is not None:
+            instance.recipient = recipients[0]
+        elif primary_recipient is not None:
+            instance.recipient = primary_recipient
         instance.save()
 
+        if recipients is not None:
+            instance.recipients.set(recipients)
         if skill_ids is not None:
             instance.skills.set(skill_ids)
         if target_team_ids is not None:

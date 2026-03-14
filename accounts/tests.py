@@ -9,7 +9,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import Kudos, Profile, SkillCategory, Team, TeamMembership
+from .models import Collection, Event, Kudos, Profile, SkillCategory, Team, TeamMembership
 
 
 User = get_user_model()
@@ -94,6 +94,29 @@ class AdminUserManagementTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.target_user.refresh_from_db()
         self.assertFalse(self.target_user.is_active)
+
+    def test_admin_can_access_event_and_collection_management(self):
+        """Verify Django admin exposes event and collection changelists."""
+        event = Event.objects.create(
+            name="Quarterly Celebration",
+            slug="quarterly-celebration",
+            starts_at=timezone.now(),
+            ends_at=timezone.now() + timedelta(hours=2),
+            is_active=True,
+        )
+        collection = Collection.objects.create(
+            name="Top Kudos",
+            slug="top-kudos",
+            is_active=True,
+        )
+
+        event_response = self.client.get(reverse("admin:accounts_event_changelist"))
+        collection_response = self.client.get(reverse("admin:accounts_collection_changelist"))
+
+        self.assertEqual(event_response.status_code, status.HTTP_200_OK)
+        self.assertContains(event_response, event.name)
+        self.assertEqual(collection_response.status_code, status.HTTP_200_OK)
+        self.assertContains(collection_response, collection.name)
 
 
 class UserAccountViewTests(APITestCase):
@@ -201,6 +224,8 @@ class AuthenticationAccessTests(APITestCase):
         self.login_url = "/auth/login/"
         self.signup_url = "/auth/signup/"
         self.public_kudos_url = "/api/kudos/public/"
+        self.user_received_kudos_url = f"/api/users/{self.user.id}/received-kudos/"
+        self.user_given_kudos_url = f"/api/users/{self.user.id}/given-kudos/"
 
     def test_login_allows_anonymous_access(self):
         """Verify login remains the only anonymous auth endpoint."""
@@ -274,6 +299,20 @@ class AuthenticationAccessTests(APITestCase):
             {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN},
         )
 
+    def test_user_received_and_given_kudos_endpoints_require_authentication(self):
+        """Verify user-specific kudos endpoints require authentication."""
+        received_response = self.client.get(self.user_received_kudos_url)
+        given_response = self.client.get(self.user_given_kudos_url)
+
+        self.assertIn(
+            received_response.status_code,
+            {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN},
+        )
+        self.assertIn(
+            given_response.status_code,
+            {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN},
+        )
+
     def test_browser_requests_redirect_to_login_page(self):
         """Verify unauthorized browser navigation redirects to login."""
         response = self.client.get("/auth/profile/", HTTP_ACCEPT="text/html")
@@ -328,7 +367,7 @@ class SignUpTeamSelectionTests(APITestCase):
             self.signup_url,
             {
                 "username": "new_teamless_user",
-                "email": "new_teamless_user@example.com",
+                "email": "new_teamless_user@pixelpulse.com",
                 "first_name": "Teamless",
                 "last_name": "User",
                 "password": "StrongPass123!",
@@ -338,7 +377,7 @@ class SignUpTeamSelectionTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        created_user = User.objects.get(email="new_teamless_user@example.com")
+        created_user = User.objects.get(email="new_teamless_user@pixelpulse.com")
         created_profile, _ = Profile.objects.get_or_create(user=created_user)
 
         self.assertIsNone(created_profile.active_team_id)
@@ -350,7 +389,7 @@ class SignUpTeamSelectionTests(APITestCase):
             self.signup_url,
             {
                 "username": "new_team_user",
-                "email": "new_team_user@example.com",
+                "email": "new_team_user@pixelpulse.com",
                 "first_name": "New",
                 "last_name": "Member",
                 "team_id": self.team.id,
@@ -361,13 +400,53 @@ class SignUpTeamSelectionTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        created_user = User.objects.get(email="new_team_user@example.com")
+        created_user = User.objects.get(email="new_team_user@pixelpulse.com")
         created_profile = Profile.objects.get(user=created_user)
 
         self.assertEqual(created_profile.active_team_id, self.team.id)
         self.assertTrue(
             TeamMembership.objects.filter(user=created_user, team=self.team).exists()
         )
+
+    def test_signup_rejects_non_pixel_pulse_email(self):
+        """Verify signup requires a Pixel Pulse email domain."""
+        response = self.client.post(
+            self.signup_url,
+            {
+                "username": "outside_user",
+                "email": "outside_user@example.com",
+                "first_name": "Outside",
+                "last_name": "User",
+                "password": "StrongPass123!",
+                "confirm_password": "StrongPass123!",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("email", response.data)
+
+
+class UserAccountEmailPolicyTests(APITestCase):
+    def setUp(self):
+        """Create a logged-in user for profile email policy checks."""
+        self.user = User.objects.create_user(
+            username="pixelpulse_user",
+            email="pixelpulse_user@pixelpulse.com",
+            password="StrongPass123!",
+        )
+
+    def test_profile_update_rejects_non_pixel_pulse_email(self):
+        """Verify users cannot change their profile email outside the company domain."""
+        self.client.force_authenticate(user=self.user)
+        response = self.client.patch(
+            "/auth/user/",
+            {"email": "new_email@example.com"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("email", response.data)
 
 
 class TeamMembershipRuleTests(APITestCase):
@@ -455,6 +534,21 @@ class KudosApiTicketTests(APITestCase):
             password="StrongPass123!",
             is_staff=True,
         )
+        self.extra_recipient_one = User.objects.create_user(
+            username="kudos_extra_one",
+            email="kudos_extra_one@example.com",
+            password="StrongPass123!",
+        )
+        self.extra_recipient_two = User.objects.create_user(
+            username="kudos_extra_two",
+            email="kudos_extra_two@example.com",
+            password="StrongPass123!",
+        )
+        self.extra_recipient_three = User.objects.create_user(
+            username="kudos_extra_three",
+            email="kudos_extra_three@example.com",
+            password="StrongPass123!",
+        )
         self.skill = SkillCategory.objects.create(
             name="Teamwork",
             slug="teamwork",
@@ -482,6 +576,8 @@ class KudosApiTicketTests(APITestCase):
         )
         self.kudos_url = "/api/kudos/"
         self.public_kudos_url = "/api/kudos/public/"
+        self.received_kudos_url = f"/api/users/{self.recipient.id}/received-kudos/"
+        self.given_kudos_url = f"/api/users/{self.sender.id}/given-kudos/"
 
     def test_post_kudos_requires_at_least_one_predefined_skill(self):
         """Verify kudos creation fails when `skill_ids` is missing.
@@ -529,6 +625,54 @@ class KudosApiTicketTests(APITestCase):
         self.assertEqual(response.data["recipient"]["id"], self.recipient.id)
         self.assertEqual(response.data["message"], "Thanks for your support")
         self.assertEqual([item["id"] for item in response.data["skills"]], [self.skill.id])
+
+    def test_post_kudos_can_save_multiple_individual_recipients(self):
+        """Verify kudos creation accepts multiple individual recipients."""
+        self.client.force_authenticate(user=self.sender)
+        response = self.client.post(
+            self.kudos_url,
+            {
+                "recipient_ids": [self.recipient.id, self.viewer.id],
+                "message": "Thanks to both of you",
+                "visibility": Kudos.Visibility.PUBLIC,
+                "skill_ids": [self.skill.id],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["recipient"]["id"], self.recipient.id)
+        self.assertEqual(
+            [item["id"] for item in response.data["recipients"]],
+            [self.recipient.id, self.viewer.id],
+        )
+
+    def test_post_kudos_rejects_more_than_five_recipients(self):
+        """Verify kudos creation returns a validation error when recipient count exceeds 5."""
+        self.client.force_authenticate(user=self.sender)
+        response = self.client.post(
+            self.kudos_url,
+            {
+                "recipient_ids": [
+                    self.recipient.id,
+                    self.viewer.id,
+                    self.staff.id,
+                    self.extra_recipient_one.id,
+                    self.extra_recipient_two.id,
+                    self.extra_recipient_three.id,
+                ],
+                "message": "Too many recipients",
+                "visibility": Kudos.Visibility.PUBLIC,
+                "skill_ids": [self.skill.id],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data["recipient_ids"][0],
+            "You can select up to 5 recipients per kudos.",
+        )
 
     def test_profile_includes_snapshot_counts(self):
         """Verify profile payload includes aggregate kudos given and received totals."""
@@ -588,6 +732,30 @@ class KudosApiTicketTests(APITestCase):
         self.assertEqual(
             response.data,
             {"kudos_given": 1, "kudos_received": 1},
+        )
+
+    def test_snapshot_counts_secondary_recipient_from_multi_recipient_kudos(self):
+        """Verify a non-primary recipient still receives snapshot credit."""
+        self.client.force_authenticate(user=self.sender)
+        create_response = self.client.post(
+            self.kudos_url,
+            {
+                "recipient_ids": [self.recipient.id, self.viewer.id],
+                "message": "Thanks to both recipients",
+                "visibility": Kudos.Visibility.PUBLIC,
+                "skill_ids": [self.skill.id],
+            },
+            format="json",
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+
+        self.client.force_authenticate(user=self.viewer)
+        response = self.client.get(f"{self.kudos_url}snapshot/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data,
+            {"kudos_given": 0, "kudos_received": 1},
         )
 
     def test_post_kudos_rejects_inactive_skill_tag(self):
@@ -730,6 +898,63 @@ class KudosApiTicketTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 2)
+        self.assertEqual(response.data["results"][0]["id"], newer.id)
+        self.assertEqual(response.data["results"][1]["id"], older.id)
+
+    def test_user_received_kudos_endpoint_includes_secondary_recipients(self):
+        """Verify user received-kudos endpoint includes multi-recipient kudos."""
+        primary = Kudos.objects.create(
+            sender=self.sender,
+            recipient=self.recipient,
+            message="Primary recipient kudos",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        primary.recipients.set([self.recipient])
+        primary.skills.set([self.skill])
+
+        secondary = Kudos.objects.create(
+            sender=self.viewer,
+            recipient=self.staff,
+            message="Secondary recipient kudos",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        secondary.recipients.set([self.staff, self.recipient])
+        secondary.skills.set([self.skill])
+
+        self.client.force_authenticate(user=self.recipient)
+        response = self.client.get(self.received_kudos_url)
+        result_ids = [item["id"] for item in response.data["results"]]
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn(primary.id, result_ids)
+        self.assertIn(secondary.id, result_ids)
+
+    def test_user_given_kudos_endpoint_returns_latest_first(self):
+        """Verify user given-kudos endpoint returns sender history newest first."""
+        older = Kudos.objects.create(
+            sender=self.sender,
+            recipient=self.recipient,
+            message="Older given kudos",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        older.recipients.set([self.recipient])
+        older.skills.set([self.skill])
+        newer = Kudos.objects.create(
+            sender=self.sender,
+            recipient=self.viewer,
+            message="Newer given kudos",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        newer.recipients.set([self.viewer])
+        newer.skills.set([self.skill])
+        now = timezone.now()
+        Kudos.objects.filter(pk=older.pk).update(created_at=now - timedelta(days=1))
+        Kudos.objects.filter(pk=newer.pk).update(created_at=now)
+
+        self.client.force_authenticate(user=self.sender)
+        response = self.client.get(self.given_kudos_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["results"][0]["id"], newer.id)
         self.assertEqual(response.data["results"][1]["id"], older.id)
 
@@ -897,6 +1122,33 @@ class KudosApiTicketTests(APITestCase):
         self.assertNotIn(sender_only.id, result_ids)
         self.assertNotIn(unrelated.id, result_ids)
 
+    def test_recipient_filter_matches_secondary_recipient(self):
+        """Verify recipient filtering includes non-primary recipients on a kudos item."""
+        matching = Kudos.objects.create(
+            sender=self.sender,
+            recipient=self.recipient,
+            message="Two recipients on one kudos",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        matching.recipients.set([self.recipient, self.viewer])
+        matching.skills.set([self.skill])
+
+        unrelated = Kudos.objects.create(
+            sender=self.sender,
+            recipient=self.staff,
+            message="Single unrelated recipient",
+            visibility=Kudos.Visibility.PUBLIC,
+        )
+        unrelated.skills.set([self.skill])
+
+        self.client.force_authenticate(user=self.sender)
+        response = self.client.get(f"{self.kudos_url}?recipient={self.viewer.id}")
+        result_ids = [item["id"] for item in response.data["results"]]
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn(matching.id, result_ids)
+        self.assertNotIn(unrelated.id, result_ids)
+
     def test_home_search_query_matches_profile_display_name(self):
         """Verify general home search matches sender/recipient profile display names."""
         Profile.objects.create(user=self.recipient, display_name="Bridget Tang")
@@ -1060,5 +1312,5 @@ class KudosApiTicketTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("text/csv", response["Content-Type"])
         content = response.content.decode("utf-8")
-        self.assertIn("id,sender,recipient,message", content.splitlines()[0])
+        self.assertIn("id,sender,recipients,message", content.splitlines()[0])
         self.assertIn("Export me", content)

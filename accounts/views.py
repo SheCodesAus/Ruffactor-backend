@@ -1,5 +1,6 @@
 import csv
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.contrib.auth import login as auth_login, logout as auth_logout, update_session_auth_hash
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -29,6 +30,8 @@ from .serializers import (
     TeamMembershipWriteSerializer,
     TeamSerializer,
 )
+
+User = get_user_model()
 
 
 def _request_prefers_html(request):
@@ -148,12 +151,47 @@ def _filter_to_current_month(queryset):
     return queryset.filter(created_at__gte=month_start, created_at__lt=next_month_start)
 
 
+def _build_recipient_lookup_query(value):
+    """Build recipient search query covering both legacy and multi-recipient relations."""
+    return _build_user_lookup_query("recipient", value) | _build_user_lookup_query(
+        "recipients",
+        value,
+    )
+
+
 def _build_kudos_snapshot(user):
     """Return aggregate kudos counts for the authenticated user's dashboard snapshot."""
     return {
         "kudos_given": Kudos.objects.filter(sender=user, is_archived=False).count(),
-        "kudos_received": Kudos.objects.filter(recipient=user, is_archived=False).count(),
+        "kudos_received": (
+            Kudos.objects.filter(
+                Q(recipient=user) | Q(recipients=user),
+                is_archived=False,
+            )
+            .distinct()
+            .count()
+        ),
     }
+
+
+def _visible_kudos_queryset(user):
+    """Return kudos visible to the requesting user using feed visibility rules."""
+    queryset = (
+        Kudos.objects.select_related("sender", "recipient")
+        .prefetch_related("recipients", "skills", "target_teams", "approved_by", "archived_by")
+    )
+    if user.is_staff:
+        return queryset
+    return queryset.filter(
+        Q(visibility=Kudos.Visibility.PUBLIC)
+        | Q(sender=user)
+        | Q(recipient=user)
+        | Q(recipients=user)
+        | Q(
+            visibility=Kudos.Visibility.TEAM,
+            target_teams__memberships__user=user,
+        )
+    ).filter(is_archived=False).distinct()
 
 
 def _apply_kudos_filters(queryset, params):
@@ -180,9 +218,9 @@ def _apply_kudos_filters(queryset, params):
             queryset = queryset.filter(_build_user_lookup_query("sender", sender))
     if recipient:
         if recipient.isdigit():
-            queryset = queryset.filter(recipient_id=recipient)
+            queryset = queryset.filter(Q(recipient_id=recipient) | Q(recipients__id=recipient))
         else:
-            queryset = queryset.filter(_build_user_lookup_query("recipient", recipient))
+            queryset = queryset.filter(_build_recipient_lookup_query(recipient))
     if team:
         queryset = queryset.filter(target_teams__id=team)
     if visibility in {
@@ -199,7 +237,7 @@ def _apply_kudos_filters(queryset, params):
         queryset = queryset.filter(
             Q(message__icontains=search_query)
             | _build_user_lookup_query("sender", search_query)
-            | _build_user_lookup_query("recipient", search_query)
+            | _build_recipient_lookup_query(search_query)
         )
     if ordering not in {"created_at", "-created_at"}:
         ordering = "-created_at"
@@ -637,6 +675,35 @@ class SkillCategoryViewSet(
         return SkillCategory.objects.all()
 
 
+class ReceivedKudosByUserView(generics.ListAPIView):
+    """Return kudos received by a specific user, scoped by requester visibility."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = KudosReadSerializer
+
+    def get_queryset(self):
+        user = get_object_or_404(User, pk=self.kwargs["pk"])
+        return (
+            _visible_kudos_queryset(self.request.user)
+            .filter(Q(recipient=user) | Q(recipients=user))
+            .order_by("-created_at")
+            .distinct()
+        )
+
+
+class GivenKudosByUserView(generics.ListAPIView):
+    """Return kudos given by a specific user, scoped by requester visibility."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = KudosReadSerializer
+
+    def get_queryset(self):
+        user = get_object_or_404(User, pk=self.kwargs["pk"])
+        return _visible_kudos_queryset(self.request.user).filter(sender=user).order_by(
+            "-created_at"
+        )
+
+
 class KudosViewSet(viewsets.ModelViewSet):
     """Main kudos CRUD + comments + admin moderation actions."""
 
@@ -658,22 +725,7 @@ class KudosViewSet(viewsets.ModelViewSet):
             QuerySet[Kudos]: Queryset visible to requester and optionally filter-applied.
         """
         user = self.request.user
-        queryset = (
-            Kudos.objects.select_related("sender", "recipient")
-            .prefetch_related("skills", "target_teams", "approved_by", "archived_by")
-        )
-        if user.is_staff:
-            filtered = queryset
-        else:
-            filtered = queryset.filter(
-                Q(visibility=Kudos.Visibility.PUBLIC)
-                | Q(sender=user)
-                | Q(recipient=user)
-                | Q(
-                    visibility=Kudos.Visibility.TEAM,
-                    target_teams__memberships__user=user,
-                )
-            ).filter(is_archived=False).distinct()
+        filtered = _visible_kudos_queryset(user)
         if self.action == "list":
             filtered = self._apply_filters(filtered, self.request.query_params)
         return filtered
@@ -854,7 +906,7 @@ class KudosViewSet(viewsets.ModelViewSet):
             [
                 "id",
                 "sender",
-                "recipient",
+                "recipients",
                 "message",
                 "visibility",
                 "link_url",
@@ -870,11 +922,14 @@ class KudosViewSet(viewsets.ModelViewSet):
             ]
         )
         for kudos in queryset:
+            recipient_usernames = list(kudos.recipients.values_list("username", flat=True))
+            if not recipient_usernames and kudos.recipient_id:
+                recipient_usernames = [kudos.recipient.username]
             writer.writerow(
                 [
                     kudos.id,
                     kudos.sender.username,
-                    kudos.recipient.username,
+                    "|".join(recipient_usernames),
                     kudos.message,
                     kudos.visibility,
                     kudos.link_url,
@@ -962,7 +1017,7 @@ class PublicKudosListView(generics.ListAPIView):
         """
         queryset = (
             Kudos.objects.select_related("sender", "recipient")
-            .prefetch_related("skills", "target_teams")
+            .prefetch_related("recipients", "skills", "target_teams")
             .filter(visibility=Kudos.Visibility.PUBLIC, is_archived=False)
             .distinct()
         )

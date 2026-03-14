@@ -3,8 +3,11 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 
 from .models import (
+    Collection,
+    Event,
     Kudos,
     KudosComment,
+    KudosRecipient,
     KudosSkillTag,
     KudosTargetTeam,
     Profile,
@@ -64,6 +67,23 @@ class TeamMembershipAdmin(admin.ModelAdmin):
     search_fields = ("team__name", "user__username", "user__email")
 
 
+@admin.register(Event)
+class EventAdmin(admin.ModelAdmin):
+    list_display = ("name", "starts_at", "ends_at", "is_active", "created_at")
+    list_filter = ("is_active",)
+    search_fields = ("name", "slug", "description")
+    prepopulated_fields = {"slug": ("name",)}
+
+
+@admin.register(Collection)
+class CollectionAdmin(admin.ModelAdmin):
+    list_display = ("name", "is_active", "created_at")
+    list_filter = ("is_active",)
+    search_fields = ("name", "slug", "description")
+    filter_horizontal = ("kudos",)
+    prepopulated_fields = {"slug": ("name",)}
+
+
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
     list_display = ("user", "display_name", "active_team", "created_at")
@@ -83,14 +103,24 @@ class KudosAdmin(admin.ModelAdmin):
     list_display = (
         "id",
         "sender",
-        "recipient",
+        "recipient_list",
         "visibility",
         "is_approved",
         "is_archived",
         "created_at",
     )
     list_filter = ("visibility", "is_approved", "is_archived")
-    search_fields = ("message", "sender__username", "recipient__username")
+    search_fields = ("message", "sender__username", "recipient__username", "recipients__username")
+
+    def recipient_list(self, obj):
+        recipients = list(obj.recipients.values_list("username", flat=True))
+        if recipients:
+            return ", ".join(recipients)
+        if obj.recipient_id:
+            return obj.recipient.username
+        return ""
+
+    recipient_list.short_description = "Recipients"
 
 
 @admin.register(KudosTargetTeam)
@@ -105,6 +135,13 @@ class KudosSkillTagAdmin(admin.ModelAdmin):
     list_display = ("kudos", "skill", "created_at")
     list_filter = ("skill",)
     search_fields = ("kudos__message", "skill__name")
+
+
+@admin.register(KudosRecipient)
+class KudosRecipientAdmin(admin.ModelAdmin):
+    list_display = ("kudos", "user", "created_at")
+    list_filter = ("created_at",)
+    search_fields = ("kudos__message", "user__username", "user__email")
 
 
 @admin.register(KudosComment)

@@ -103,6 +103,37 @@ class TeamMembership(TimeStampedModel):
         return f"{self.user} in {self.team} ({self.role})"
 
 
+class Event(TimeStampedModel):
+    name = models.CharField(max_length=120, unique=True)
+    slug = models.SlugField(max_length=140, unique=True)
+    description = models.TextField(blank=True)
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField()
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["starts_at", "name"]
+
+    def __str__(self):
+        """Return the event name for admin and API debug output."""
+        return self.name
+
+
+class Collection(TimeStampedModel):
+    name = models.CharField(max_length=120, unique=True)
+    slug = models.SlugField(max_length=140, unique=True)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    kudos = models.ManyToManyField("Kudos", related_name="collections", blank=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        """Return the collection name for admin and API debug output."""
+        return self.name
+
+
 class Kudos(TimeStampedModel):
     class Visibility(models.TextChoices):
         PUBLIC = "public", "Public"
@@ -118,6 +149,12 @@ class Kudos(TimeStampedModel):
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
         related_name="kudos_received",
+    )
+    recipients = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        through="KudosRecipient",
+        related_name="kudos_received_multi",
+        blank=True,
     )
     message = models.TextField(max_length=1000)
     link_url = models.URLField(blank=True)
@@ -211,6 +248,32 @@ class KudosTargetTeam(TimeStampedModel):
             str: Composite identifier in the form `{kudos_id}:{team_name}`.
         """
         return f"{self.kudos_id}:{self.team.name}"
+
+
+class KudosRecipient(TimeStampedModel):
+    kudos = models.ForeignKey(
+        Kudos,
+        on_delete=models.CASCADE,
+        related_name="recipient_links",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="kudos_recipient_links",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["kudos", "user"], name="uniq_kudos_recipient"),
+        ]
+        indexes = [
+            models.Index(fields=["user", "created_at"]),
+            models.Index(fields=["kudos", "created_at"]),
+        ]
+
+    def __str__(self):
+        """Return compact identifier for a kudos/recipient relation row."""
+        return f"{self.kudos_id}:{self.user.username}"
 
 
 class KudosSkillTag(TimeStampedModel):

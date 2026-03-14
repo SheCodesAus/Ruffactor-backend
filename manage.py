@@ -2,13 +2,14 @@
 """Django's command-line utility for administrative tasks."""
 import os
 import sys
-from pathlib import Path
 
 
 def main():
-    """Run administrative tasks."""
-    project_root = Path(__file__).resolve().parent / "ruffactor_backend"
-    sys.path.insert(0, str(project_root))
+    """Entrypoint for Django management commands.
+
+    Raises:
+        ImportError: If Django cannot be imported in the current environment.
+    """
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'ruffactor_backend.settings')
     try:
         from django.core.management import execute_from_command_line
