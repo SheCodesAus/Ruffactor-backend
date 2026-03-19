@@ -1,5 +1,6 @@
 from django.conf import settings
-from django.contrib.auth import authenticate, get_user_model, password_validation
+from django.contrib.auth import get_user_model, password_validation
+from django.db import transaction
 from django.utils.text import slugify
 from rest_framework import serializers
 
@@ -11,29 +12,14 @@ PIXEL_PULSE_EMAIL_SUFFIX = getattr(settings, "PIXEL_PULSE_EMAIL_SUFFIX", "+pp@gm
 MAX_KUDOS_RECIPIENTS = 5
 
 
-def _validate_pixel_pulse_email(email):
-    """Ensure the email matches the allowed Pixel Pulse signup suffix."""
-    if not email.endswith(PIXEL_PULSE_EMAIL_SUFFIX):
+def _normalize_pixel_pulse_email(email):
+    """Normalize email input and enforce the allowed Pixel Pulse signup suffix."""
+    normalized = email.strip().lower()
+    if not normalized.endswith(PIXEL_PULSE_EMAIL_SUFFIX):
         raise serializers.ValidationError(
             "Please use your validated email ending with +pp@gmail.com."
         )
-    return email
-
-
-def _build_unique_signup_username(email, first_name, last_name):
-    """Generate a unique username for signups that do not provide one."""
-    first_slug = slugify(first_name).replace("-", "")
-    last_slug = slugify(last_name).replace("-", "")
-    email_local_part = email.split("@", 1)[0]
-    base_username = (f"{first_slug}{last_slug}" or email_local_part or "user")[:150]
-    candidate = base_username
-    suffix = 2
-
-    while User.objects.filter(username=candidate).exists():
-        suffix_text = str(suffix)
-        candidate = f"{base_username[: 150 - len(suffix_text)]}{suffix_text}"
-        suffix += 1
-    return candidate
+    return normalized
 
 
 class SignUpSerializer(serializers.ModelSerializer):
@@ -75,8 +61,7 @@ class SignUpSerializer(serializers.ModelSerializer):
         Raises:
             serializers.ValidationError: If another user already uses this email.
         """
-        normalized = value.strip().lower()
-        _validate_pixel_pulse_email(normalized)
+        normalized = _normalize_pixel_pulse_email(value)
 
         if User.objects.filter(email__iexact=normalized).exists():
             raise serializers.ValidationError("A user with this email already exists.")
@@ -98,11 +83,6 @@ class SignUpSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
 
         temp_user = User(
-            username=_build_unique_signup_username(
-                attrs.get("email", ""),
-                attrs.get("first_name", ""),
-                attrs.get("last_name", ""),
-            ),
             email=attrs.get("email"),
             first_name=attrs.get("first_name", ""),
             last_name=attrs.get("last_name", ""),
@@ -122,24 +102,21 @@ class SignUpSerializer(serializers.ModelSerializer):
         validated_data.pop("confirm_password")
         password = validated_data.pop("password")
         team = validated_data.pop("team", None)
-        validated_data["username"] = _build_unique_signup_username(
-            validated_data.get("email", ""),
-            validated_data.get("first_name", ""),
-            validated_data.get("last_name", ""),
-        )
-        user = User(**validated_data)
-        user.is_active = True
-        user.set_password(password)
-        user.save()
-        if team is not None:
-            profile, _ = Profile.objects.get_or_create(user=user)
-            profile.active_team = team
-            profile.save(update_fields=["active_team", "updated_at"])
-            TeamMembership.objects.get_or_create(
-                user=user,
-                team=team,
-                defaults={"role": TeamMembership.Role.MEMBER},
+        with transaction.atomic():
+            user = User.objects.create_user(
+                password=password,
+                is_active=True,
+                **validated_data,
             )
+            if team is not None:
+                profile, _ = Profile.objects.get_or_create(user=user)
+                profile.active_team = team
+                profile.save(update_fields=["active_team", "updated_at"])
+                TeamMembership.objects.get_or_create(
+                    user=user,
+                    team=team,
+                    defaults={"role": TeamMembership.Role.MEMBER},
+                )
         return user
 
 
@@ -173,8 +150,7 @@ class LoginSerializer(serializers.Serializer):
         except User.DoesNotExist:
             raise serializers.ValidationError("Invalid email or password.")
 
-        user = authenticate(username=user.username, password=password)
-        if not user:
+        if not user.check_password(password) or not user.is_active:
             raise serializers.ValidationError("Invalid email or password.")
 
         selected_team = attrs.get("team")
@@ -190,7 +166,6 @@ class LoginSerializer(serializers.Serializer):
 
 
 class UserAccountPatchSerializer(serializers.Serializer):
-    username = serializers.CharField(required=False, max_length=150)
     email = serializers.EmailField(required=False)
     first_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
     last_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
@@ -215,29 +190,10 @@ class UserAccountPatchSerializer(serializers.Serializer):
         Raises:
             serializers.ValidationError: If email already exists on another account.
         """
-        normalized = value.strip().lower()
-        _validate_pixel_pulse_email(normalized)
+        normalized = _normalize_pixel_pulse_email(value)
         user = self.instance
         if User.objects.filter(email__iexact=normalized).exclude(pk=user.pk).exists():
             raise serializers.ValidationError("A user with this email already exists.")
-        return normalized
-
-    def validate_username(self, value):
-        """Trim username and ensure global uniqueness excluding current user.
-
-        Args:
-            value (str): Username from PATCH payload.
-
-        Returns:
-            str: Trimmed username.
-
-        Raises:
-            serializers.ValidationError: If username is already taken.
-        """
-        normalized = value.strip()
-        user = self.instance
-        if User.objects.filter(username=normalized).exclude(pk=user.pk).exists():
-            raise serializers.ValidationError("A user with this username already exists.")
         return normalized
 
     def validate(self, attrs):
@@ -265,7 +221,6 @@ class UserAccountPatchSerializer(serializers.Serializer):
             if password != confirm_password:
                 raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
             temp_user = User(
-                username=attrs.get("username", user.username),
                 email=attrs.get("email", user.email),
                 first_name=attrs.get("first_name", user.first_name),
                 last_name=attrs.get("last_name", user.last_name),
@@ -313,7 +268,7 @@ class UserAccountPatchSerializer(serializers.Serializer):
 class UserSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ("id", "username", "first_name", "last_name")
+        fields = ("id", "first_name", "last_name")
 
 
 class TeamSerializer(serializers.ModelSerializer):

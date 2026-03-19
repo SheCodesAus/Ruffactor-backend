@@ -126,12 +126,19 @@ def _serialize_user_payload(user):
 def _build_user_lookup_query(prefix, value):
     """Build a flexible user lookup query for sender/recipient filtering."""
     return (
-        Q(**{f"{prefix}__username__icontains": value})
-        | Q(**{f"{prefix}__email__icontains": value})
+        Q(**{f"{prefix}__email__icontains": value})
         | Q(**{f"{prefix}__first_name__icontains": value})
         | Q(**{f"{prefix}__last_name__icontains": value})
         | Q(**{f"{prefix}__profile__display_name__icontains": value})
     )
+
+
+def _format_user_label(user):
+    """Return a user-facing label without exposing backend login identifiers."""
+    profile = getattr(user, "profile", None)
+    display_name = (getattr(profile, "display_name", "") or "").strip()
+    full_name = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip()
+    return display_name or full_name or user.email
 
 
 def _current_month_bounds():
@@ -288,7 +295,7 @@ class LoginView(APIView):
         Returns:
             Response: 200 response with auth token and serialized user data.
         """
-        serializer = LoginSerializer(data=request.data)
+        serializer = LoginSerializer(data=request.data, context={"request": request})
         if _request_prefers_html(request):
             if not serializer.is_valid():
                 return render(
@@ -935,14 +942,14 @@ class KudosViewSet(viewsets.ModelViewSet):
             ]
         )
         for kudos in queryset:
-            recipient_usernames = list(kudos.recipients.values_list("username", flat=True))
-            if not recipient_usernames and kudos.recipient_id:
-                recipient_usernames = [kudos.recipient.username]
+            recipient_labels = [_format_user_label(user) for user in kudos.recipients.all()]
+            if not recipient_labels and kudos.recipient_id:
+                recipient_labels = [_format_user_label(kudos.recipient)]
             writer.writerow(
                 [
                     kudos.id,
-                    kudos.sender.username,
-                    "|".join(recipient_usernames),
+                    _format_user_label(kudos.sender),
+                    "|".join(recipient_labels),
                     kudos.message,
                     kudos.visibility,
                     kudos.link_url,
@@ -950,10 +957,10 @@ class KudosViewSet(viewsets.ModelViewSet):
                     "|".join(kudos.skills.values_list("slug", flat=True)),
                     kudos.is_approved,
                     kudos.approved_at.isoformat() if kudos.approved_at else "",
-                    kudos.approved_by.username if kudos.approved_by else "",
+                    _format_user_label(kudos.approved_by) if kudos.approved_by else "",
                     kudos.is_archived,
                     kudos.archived_at.isoformat() if kudos.archived_at else "",
-                    kudos.archived_by.username if kudos.archived_by else "",
+                    _format_user_label(kudos.archived_by) if kudos.archived_by else "",
                     kudos.created_at.isoformat(),
                 ]
             )

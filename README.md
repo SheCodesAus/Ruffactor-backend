@@ -167,10 +167,10 @@ This website has two major target audiences: She Codes ‘Leaders, Volunteers & 
 
 | HTTP Method | URL                                 | Purpose                                                                                                                                  | Request Body                                                                                                       | Successful Response Code | Authentication and Authorization                      |
 | :---------- | :---------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------- | :----------------------- | :---------------------------------------------------- |
-| POST        | /login                              | Allow users to log in                                                                                                                    | ““Username”:”string”, “password”:”string”                                                                          | 200                      | Token auth                                            |
-| POST        | /logout                             | Allow users to log out ( end active session)                                                                                             | ““Username”:”string”, “password”:”string”                                                                          | 200                      | Will clear user log in session \- remove stored token |
-| POST        | /Register                           | Create new student or approver user                                                                                                      | “Username”:”string”, “FullName”: “string” “Email”:”string”,”Password”:”string”, ”ConfirmPassword”:”string”,        | 201                      | Admin                                                 |
-| PUT         | /Profile/ID                         | Edit user                                                                                                                                | “Username”:”string”, “FullName”: “string” “Email”:”string”, “Avatar”:”string”,  “Bio”:”string”, “Socials”:”string” | 200                      | Admin, approver or student with matching ID           |
+| POST        | /login                              | Allow users to log in                                                                                                                    | “Email”:”string”, “password”:”string”                                                                             | 200                      | Token auth                                            |
+| POST        | /logout                             | Allow users to log out ( end active session)                                                                                             | “Email”:”string”, “password”:”string”                                                                             | 200                      | Will clear user log in session \- remove stored token |
+| POST        | /Register                           | Create new student or approver user                                                                                                      | “FirstName”:”string”, “LastName”:”string”, “Email”:”string”,”Password”:”string”, ”ConfirmPassword”:”string”      | 201                      | Admin                                                 |
+| PUT         | /Profile/ID                         | Edit user                                                                                                                                | “FirstName”:”string”, “LastName”:”string”, “Email”:”string”, “Avatar”:”string”,  “Bio”:”string”, “Socials”:”string” | 200                      | Admin, approver or student with matching ID           |
 | GET         | /Profile/ID                         | View User profile                                                                                                                        | NA                                                                                                                 | 200                      | Any                                                   |
 | DELETE      | /User/ID                            | Delete user                                                                                                                              | NA                                                                                                                 | 204                      | Admin, approver or student with matching ID           |
 | POST        | /EventCollection                    | Create new Event Collection                                                                                                              | “Title”:”string”, “IsExported”:”boolean” “Approver”: integer                                                       | 201                      | Admin                                                 |
@@ -190,11 +190,10 @@ This website has two major target audiences: She Codes ‘Leaders, Volunteers & 
 
 ### Object Definitions (Current Backend Models)
 
-#### Auth User (`django.contrib.auth.models.User`)
+#### User (`accounts.User`)
 | Field | Data type |
 | :---- | :-------- |
 | `id` (PK) | integer |
-| `username` | string |
 | `email` | string |
 | `first_name` | string |
 | `last_name` | string |
@@ -288,7 +287,6 @@ Constraints:
 #### Sign-up Payload (API Input)
 | Field | Data type |
 | :---- | :-------- |
-| `username` | string |
 | `email` | string |
 | `first_name` | string |
 | `last_name` | string |
@@ -300,12 +298,12 @@ This ER diagram reflects the current backend schema (users, profiles, teams, mem
 
 ```mermaid
 erDiagram
-    AUTH_USER ||--o| PROFILE : has
-    AUTH_USER ||--o{ TEAM_MEMBERSHIP : joins
+    ACCOUNTS_USER ||--o| PROFILE : has
+    ACCOUNTS_USER ||--o{ TEAM_MEMBERSHIP : joins
     TEAM ||--o{ TEAM_MEMBERSHIP : includes
 
-    AUTH_USER ||--o{ KUDOS : sends
-    AUTH_USER ||--o{ KUDOS : receives
+    ACCOUNTS_USER ||--o{ KUDOS : sends
+    ACCOUNTS_USER ||--o{ KUDOS : receives
 
     KUDOS ||--o{ KUDOS_SKILL_TAG : tagged_with
     SKILL_CATEGORY ||--o{ KUDOS_SKILL_TAG : categorizes
@@ -313,10 +311,11 @@ erDiagram
     KUDOS ||--o{ KUDOS_TARGET_TEAM : targets
     TEAM ||--o{ KUDOS_TARGET_TEAM : receives
 
-    AUTH_USER {
+    ACCOUNTS_USER {
       int id PK
-      string username
       string email
+      string first_name
+      string last_name
     }
     PROFILE {
       int id PK

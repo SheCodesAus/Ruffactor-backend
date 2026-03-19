@@ -1,6 +1,9 @@
 from django.conf import settings
+from django.contrib.auth.models import AbstractUser, BaseUserManager
+from django.db import DEFAULT_DB_ALIAS, connections
 from django.db import models
 from django.db.models import F, Q
+from django.db.utils import OperationalError, ProgrammingError
 
 
 class TimeStampedModel(models.Model):
@@ -9,6 +12,144 @@ class TimeStampedModel(models.Model):
 
     class Meta:
         abstract = True
+
+
+class UserManager(BaseUserManager):
+    use_in_migrations = True
+
+    def _create_user(self, email, password, **extra_fields):
+        if not email:
+            raise ValueError("The email field must be set.")
+        email = self.normalize_email(email)
+        user = self.model(email=email, **extra_fields)
+        user.set_password(password)
+        user.save(using=self._db)
+        return user
+
+    def create_user(self, email, password=None, **extra_fields):
+        extra_fields.setdefault("is_staff", False)
+        extra_fields.setdefault("is_superuser", False)
+        return self._create_user(email, password, **extra_fields)
+
+    def create_superuser(self, email, password=None, **extra_fields):
+        extra_fields.setdefault("is_staff", True)
+        extra_fields.setdefault("is_superuser", True)
+
+        if extra_fields.get("is_staff") is not True:
+            raise ValueError("Superuser must have is_staff=True.")
+        if extra_fields.get("is_superuser") is not True:
+            raise ValueError("Superuser must have is_superuser=True.")
+
+        return self._create_user(email, password, **extra_fields)
+
+
+class User(AbstractUser):
+    username = None
+    email = models.EmailField(unique=True)
+    first_name = models.CharField(max_length=150)
+    last_name = models.CharField(max_length=150)
+
+    USERNAME_FIELD = "email"
+    REQUIRED_FIELDS = ["first_name", "last_name"]
+
+    objects = UserManager()
+
+    def save(self, *args, **kwargs):
+        using = kwargs.get("using") or self._state.db or DEFAULT_DB_ALIAS
+        super().save(*args, **kwargs)
+        _sync_legacy_auth_user_row(self, using=using)
+
+    def delete(self, *args, **kwargs):
+        using = kwargs.get("using") or self._state.db or DEFAULT_DB_ALIAS
+        user_id = self.pk
+        result = super().delete(*args, **kwargs)
+        _delete_legacy_auth_user_row(user_id, using=using)
+        return result
+
+    def __str__(self):
+        return _user_label(self)
+
+
+def _user_label(user):
+    """Return a human-readable label for a user without relying on login fields."""
+    full_name = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip()
+    return full_name or user.email
+
+
+def _legacy_auth_user_table_exists(using=DEFAULT_DB_ALIAS):
+    connection = connections[using]
+    try:
+        return "auth_user" in connection.introspection.table_names()
+    except (OperationalError, ProgrammingError):
+        return False
+
+
+def _sync_legacy_auth_user_row(user, using=DEFAULT_DB_ALIAS):
+    """Mirror the custom user row into a legacy auth_user table when it still exists."""
+    if user.pk is None or not _legacy_auth_user_table_exists(using):
+        return
+
+    with connections[using].cursor() as cursor:
+        cursor.execute("SELECT 1 FROM auth_user WHERE id = %s", [user.pk])
+        row_exists = cursor.fetchone() is not None
+        values = [
+            user.password,
+            user.last_login,
+            user.is_superuser,
+            user.email,
+            user.last_name,
+            user.email,
+            user.is_staff,
+            user.is_active,
+            user.date_joined,
+            user.first_name,
+        ]
+        if row_exists:
+            cursor.execute(
+                """
+                UPDATE auth_user
+                SET password = %s,
+                    last_login = %s,
+                    is_superuser = %s,
+                    username = %s,
+                    last_name = %s,
+                    email = %s,
+                    is_staff = %s,
+                    is_active = %s,
+                    date_joined = %s,
+                    first_name = %s
+                WHERE id = %s
+                """,
+                [*values, user.pk],
+            )
+        else:
+            cursor.execute(
+                """
+                INSERT INTO auth_user (
+                    id,
+                    password,
+                    last_login,
+                    is_superuser,
+                    username,
+                    last_name,
+                    email,
+                    is_staff,
+                    is_active,
+                    date_joined,
+                    first_name
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                [user.pk, *values],
+            )
+
+
+def _delete_legacy_auth_user_row(user_id, using=DEFAULT_DB_ALIAS):
+    """Delete the mirrored legacy auth_user row when it exists."""
+    if not user_id or not _legacy_auth_user_table_exists(using):
+        return
+
+    with connections[using].cursor() as cursor:
+        cursor.execute("DELETE FROM auth_user WHERE id = %s", [user_id])
 
 
 class Profile(TimeStampedModel):
@@ -32,9 +173,9 @@ class Profile(TimeStampedModel):
         """Return a display-friendly profile label.
 
         Returns:
-            str: `display_name` when provided, otherwise the linked username.
+            str: `display_name` when provided, otherwise the linked name/email.
         """
-        return self.display_name or self.user.get_username()
+        return self.display_name or _user_label(self.user)
 
 
 class SkillCategory(TimeStampedModel):
@@ -100,7 +241,7 @@ class TeamMembership(TimeStampedModel):
         Returns:
             str: Formatted string including user, team, and membership role.
         """
-        return f"{self.user} in {self.team} ({self.role})"
+        return f"{_user_label(self.user)} in {self.team} ({self.role})"
 
 
 class Event(TimeStampedModel):
@@ -217,7 +358,7 @@ class Kudos(TimeStampedModel):
         Returns:
             str: Human-readable sender and recipient summary.
         """
-        return f"Kudos from {self.sender} to {self.recipient}"
+        return f"Kudos from {_user_label(self.sender)} to {_user_label(self.recipient)}"
 
 
 class KudosTargetTeam(TimeStampedModel):
@@ -273,7 +414,7 @@ class KudosRecipient(TimeStampedModel):
 
     def __str__(self):
         """Return compact identifier for a kudos/recipient relation row."""
-        return f"{self.kudos_id}:{self.user.username}"
+        return f"{self.kudos_id}:{_user_label(self.user)}"
 
 
 class KudosSkillTag(TimeStampedModel):

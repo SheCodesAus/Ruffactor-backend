@@ -2,7 +2,7 @@
 -- DrawSQL-friendly: complete table references and clean FK definitions.
 --
 -- IMPORTANT:
--- - `auth_user` below is a simplified structure for schema visualization/import.
+-- - `accounts_user` below is a simplified structure for schema visualization/import.
 -- - In a real Django database, auth tables are managed by Django migrations.
 
 SET NAMES utf8mb4;
@@ -15,18 +15,19 @@ DROP TABLE IF EXISTS accounts_teammembership;
 DROP TABLE IF EXISTS accounts_team;
 DROP TABLE IF EXISTS accounts_skillcategory;
 DROP TABLE IF EXISTS accounts_profile;
-DROP TABLE IF EXISTS auth_user;
+DROP TABLE IF EXISTS accounts_user;
 
--- Django auth user (simplified for ERD import)
-CREATE TABLE auth_user (
+-- Project user model (simplified for ERD import)
+CREATE TABLE accounts_user (
   id         INT NOT NULL AUTO_INCREMENT,
-  username   VARCHAR(150) NOT NULL,
   email      VARCHAR(254) NOT NULL,
-  first_name VARCHAR(150) NOT NULL DEFAULT '',
-  last_name  VARCHAR(150) NOT NULL DEFAULT '',
+  first_name VARCHAR(150) NOT NULL,
+  last_name  VARCHAR(150) NOT NULL,
   password   VARCHAR(128) NOT NULL,
+  is_staff   TINYINT(1) NOT NULL DEFAULT 0,
+  is_active  TINYINT(1) NOT NULL DEFAULT 1,
   PRIMARY KEY (id),
-  UNIQUE KEY uq_auth_user_username (username)
+  UNIQUE KEY uq_accounts_user_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE accounts_profile (
@@ -40,7 +41,7 @@ CREATE TABLE accounts_profile (
   PRIMARY KEY (id),
   UNIQUE KEY uq_accounts_profile_user (user_id),
   CONSTRAINT fk_accounts_profile_user
-    FOREIGN KEY (user_id) REFERENCES auth_user(id)
+    FOREIGN KEY (user_id) REFERENCES accounts_user(id)
     ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -84,7 +85,7 @@ CREATE TABLE accounts_teammembership (
     FOREIGN KEY (team_id) REFERENCES accounts_team(id)
     ON DELETE CASCADE,
   CONSTRAINT fk_accounts_teammembership_user
-    FOREIGN KEY (user_id) REFERENCES auth_user(id)
+    FOREIGN KEY (user_id) REFERENCES accounts_user(id)
     ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -104,10 +105,10 @@ CREATE TABLE accounts_kudos (
   KEY idx_accounts_kudos_sender_created_at (sender_id, created_at),
   KEY idx_accounts_kudos_visibility_created_at (visibility, created_at),
   CONSTRAINT fk_accounts_kudos_recipient
-    FOREIGN KEY (recipient_id) REFERENCES auth_user(id)
+    FOREIGN KEY (recipient_id) REFERENCES accounts_user(id)
     ON DELETE RESTRICT,
   CONSTRAINT fk_accounts_kudos_sender
-    FOREIGN KEY (sender_id) REFERENCES auth_user(id)
+    FOREIGN KEY (sender_id) REFERENCES accounts_user(id)
     ON DELETE RESTRICT,
   CONSTRAINT chk_accounts_kudos_not_self CHECK (sender_id <> recipient_id),
   CONSTRAINT chk_accounts_kudos_visibility CHECK (visibility IN ('public', 'team', 'private'))
