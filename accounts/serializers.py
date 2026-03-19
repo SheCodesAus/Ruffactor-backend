@@ -7,14 +7,16 @@ from .models import Kudos, KudosComment, Profile, SkillCategory, Team, TeamMembe
 
 
 User = get_user_model()
-PIXEL_PULSE_EMAIL_DOMAIN = getattr(settings, "PIXEL_PULSE_EMAIL_DOMAIN", "pixelpulse.com").lower()
+PIXEL_PULSE_EMAIL_SUFFIX = getattr(settings, "PIXEL_PULSE_EMAIL_SUFFIX", "+pp@gmail.com").lower()
 MAX_KUDOS_RECIPIENTS = 5
 
 
 def _validate_pixel_pulse_email(email):
-    """Ensure the email belongs to the allowed Pixel Pulse domain."""
-    if not email.endswith(f"@{PIXEL_PULSE_EMAIL_DOMAIN}"):
-        raise serializers.ValidationError("Please use your Pixel Pulse email address.")
+    """Ensure the email matches the allowed Pixel Pulse signup suffix."""
+    if not email.endswith(PIXEL_PULSE_EMAIL_SUFFIX):
+        raise serializers.ValidationError(
+            "Please use your validated email ending with +pp@gmail.com."
+        )
     return email
 
 

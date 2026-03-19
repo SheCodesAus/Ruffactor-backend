@@ -278,7 +278,7 @@ class AuthenticationAccessTests(APITestCase):
         response = self.client.post(
             self.signup_url,
             {
-                "email": "signup_user@pixelpulse.com",
+                "email": "signup_user+pp@gmail.com",
                 "first_name": "Signup",
                 "last_name": "User",
                 "password": "StrongPass123!",
@@ -288,7 +288,7 @@ class AuthenticationAccessTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data["user"]["email"], "signup_user@pixelpulse.com")
+        self.assertEqual(response.data["user"]["email"], "signup_user+pp@gmail.com")
         self.assertTrue(response.data["user"]["is_active"])
         self.assertNotIn("username", response.data["user"])
 
@@ -368,7 +368,7 @@ class SignUpTeamSelectionTests(APITestCase):
         response = self.client.post(
             self.signup_url,
             {
-                "email": "new_teamless_user@pixelpulse.com",
+                "email": "new_teamless_user+pp@gmail.com",
                 "first_name": "Teamless",
                 "last_name": "User",
                 "password": "StrongPass123!",
@@ -378,7 +378,7 @@ class SignUpTeamSelectionTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        created_user = User.objects.get(email="new_teamless_user@pixelpulse.com")
+        created_user = User.objects.get(email="new_teamless_user+pp@gmail.com")
         created_profile, _ = Profile.objects.get_or_create(user=created_user)
 
         self.assertIsNone(created_profile.active_team_id)
@@ -391,7 +391,7 @@ class SignUpTeamSelectionTests(APITestCase):
         response = self.client.post(
             self.signup_url,
             {
-                "email": "new_team_user@pixelpulse.com",
+                "email": "new_team_user+pp@gmail.com",
                 "first_name": "New",
                 "last_name": "Member",
                 "team_id": self.team.id,
@@ -402,7 +402,7 @@ class SignUpTeamSelectionTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        created_user = User.objects.get(email="new_team_user@pixelpulse.com")
+        created_user = User.objects.get(email="new_team_user+pp@gmail.com")
         created_profile = Profile.objects.get(user=created_user)
 
         self.assertEqual(created_profile.active_team_id, self.team.id)
@@ -411,7 +411,7 @@ class SignUpTeamSelectionTests(APITestCase):
         )
 
     def test_signup_rejects_non_pixel_pulse_email(self):
-        """Verify signup requires a Pixel Pulse email domain."""
+        """Verify signup requires the approved +pp@gmail.com email suffix."""
         response = self.client.post(
             self.signup_url,
             {
@@ -432,7 +432,7 @@ class SignUpTeamSelectionTests(APITestCase):
         response = self.client.post(
             self.signup_url,
             {
-                "email": "missing_names@pixelpulse.com",
+                "email": "missing_names+pp@gmail.com",
                 "password": "StrongPass123!",
                 "confirm_password": "StrongPass123!",
             },
@@ -449,12 +449,12 @@ class UserAccountEmailPolicyTests(APITestCase):
         """Create a logged-in user for profile email policy checks."""
         self.user = User.objects.create_user(
             username="pixelpulse_user",
-            email="pixelpulse_user@pixelpulse.com",
+            email="pixelpulse_user+pp@gmail.com",
             password="StrongPass123!",
         )
 
     def test_profile_update_rejects_non_pixel_pulse_email(self):
-        """Verify users cannot change their profile email outside the company domain."""
+        """Verify users cannot change their profile email outside the approved suffix."""
         self.client.force_authenticate(user=self.user)
         response = self.client.patch(
             "/auth/user/",
