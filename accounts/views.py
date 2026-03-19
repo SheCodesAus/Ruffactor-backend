@@ -29,6 +29,7 @@ from .serializers import (
     TeamMembershipSerializer,
     TeamMembershipWriteSerializer,
     TeamSerializer,
+    UserSummarySerializer
 )
 
 User = get_user_model()
@@ -403,6 +404,13 @@ class UserAccountView(APIView):
         auth_logout(request)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+class UserListView(APIView):
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+
+    def get(self, request):
+        users = User.objects.all().order_by("id")
+        serializer = UserSummarySerializer(users, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 class ProfileView(APIView):
     permission_classes = [permissions.IsAuthenticated]
