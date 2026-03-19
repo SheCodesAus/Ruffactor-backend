@@ -110,10 +110,10 @@ def _serialize_user_payload(user):
     profile, teams = _get_profile_and_teams(user)
     return {
         "id": user.id,
-        "username": user.username,
         "email": user.email,
         "first_name": user.first_name,
         "last_name": user.last_name,
+        "is_active": user.is_active,
         "display_name": profile.display_name,
         "bio": profile.bio,
         "avatar_url": profile.avatar_url,
@@ -246,7 +246,20 @@ def _apply_kudos_filters(queryset, params):
 
 class SignUpView(generics.CreateAPIView):
     serializer_class = SignUpSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
+
+    def create(self, request, *args, **kwargs):
+        """Create a user account for anonymous or authenticated signup flows."""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        return Response(
+            {
+                "message": "User created.",
+                "user": _serialize_user_payload(user),
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class LoginView(APIView):

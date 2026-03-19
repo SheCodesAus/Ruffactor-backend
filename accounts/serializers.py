@@ -18,8 +18,26 @@ def _validate_pixel_pulse_email(email):
     return email
 
 
+def _build_unique_signup_username(email, first_name, last_name):
+    """Generate a unique username for signups that do not provide one."""
+    first_slug = slugify(first_name).replace("-", "")
+    last_slug = slugify(last_name).replace("-", "")
+    email_local_part = email.split("@", 1)[0]
+    base_username = (f"{first_slug}{last_slug}" or email_local_part or "user")[:150]
+    candidate = base_username
+    suffix = 2
+
+    while User.objects.filter(username=candidate).exists():
+        suffix_text = str(suffix)
+        candidate = f"{base_username[: 150 - len(suffix_text)]}{suffix_text}"
+        suffix += 1
+    return candidate
+
+
 class SignUpSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(required=True)
+    first_name = serializers.CharField(required=True, allow_blank=False, max_length=150)
+    last_name = serializers.CharField(required=True, allow_blank=False, max_length=150)
     password = serializers.CharField(write_only=True, min_length=8)
     confirm_password = serializers.CharField(write_only=True)
     team_id = serializers.PrimaryKeyRelatedField(
@@ -34,7 +52,6 @@ class SignUpSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             "id",
-            "username",
             "email",
             "first_name",
             "last_name",
@@ -79,7 +96,11 @@ class SignUpSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
 
         temp_user = User(
-            username=attrs.get("username"),
+            username=_build_unique_signup_username(
+                attrs.get("email", ""),
+                attrs.get("first_name", ""),
+                attrs.get("last_name", ""),
+            ),
             email=attrs.get("email"),
             first_name=attrs.get("first_name", ""),
             last_name=attrs.get("last_name", ""),
@@ -99,7 +120,13 @@ class SignUpSerializer(serializers.ModelSerializer):
         validated_data.pop("confirm_password")
         password = validated_data.pop("password")
         team = validated_data.pop("team", None)
+        validated_data["username"] = _build_unique_signup_username(
+            validated_data.get("email", ""),
+            validated_data.get("first_name", ""),
+            validated_data.get("last_name", ""),
+        )
         user = User(**validated_data)
+        user.is_active = True
         user.set_password(password)
         user.save()
         if team is not None:

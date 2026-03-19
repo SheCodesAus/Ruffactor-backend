@@ -36,17 +36,16 @@ except admin.sites.NotRegistered:
 class UserAdmin(DjangoUserAdmin):
     inlines = (ProfileInline,)
     list_display = (
-        "username",
-        "email",
         "first_name",
         "last_name",
+        "email",
         "is_staff",
         "is_active",
         "date_joined",
     )
     list_filter = ("is_staff", "is_superuser", "is_active", "groups")
     search_fields = ("username", "email", "first_name", "last_name")
-    ordering = ("username",)
+    ordering = ("first_name", "last_name", "email")
 
 
 admin.site.site_header = "Ruffactor Admin Dashboard"

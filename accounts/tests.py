@@ -199,8 +199,9 @@ class UserAccountViewTests(APITestCase):
         response = self.client.post(
             self.url,
             {
-                "username": "new_user",
                 "email": "new_user@example.com",
+                "first_name": "New",
+                "last_name": "User",
                 "password": "StrongPass123!",
                 "confirm_password": "StrongPass123!",
             },
@@ -272,23 +273,24 @@ class AuthenticationAccessTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertContains(response, "Log in")
 
-    def test_signup_requires_authentication(self):
-        """Verify signup endpoint is no longer publicly accessible."""
+    def test_signup_allows_anonymous_access(self):
+        """Verify signup is available to anonymous users."""
         response = self.client.post(
             self.signup_url,
             {
-                "username": "signup_user",
-                "email": "signup_user@example.com",
+                "email": "signup_user@pixelpulse.com",
+                "first_name": "Signup",
+                "last_name": "User",
                 "password": "StrongPass123!",
                 "confirm_password": "StrongPass123!",
             },
             format="json",
         )
 
-        self.assertIn(
-            response.status_code,
-            {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN},
-        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["user"]["email"], "signup_user@pixelpulse.com")
+        self.assertTrue(response.data["user"]["is_active"])
+        self.assertNotIn("username", response.data["user"])
 
     def test_public_kudos_feed_requires_authentication(self):
         """Verify anonymous users cannot access the read-only kudos feed."""
@@ -366,7 +368,6 @@ class SignUpTeamSelectionTests(APITestCase):
         response = self.client.post(
             self.signup_url,
             {
-                "username": "new_teamless_user",
                 "email": "new_teamless_user@pixelpulse.com",
                 "first_name": "Teamless",
                 "last_name": "User",
@@ -382,13 +383,14 @@ class SignUpTeamSelectionTests(APITestCase):
 
         self.assertIsNone(created_profile.active_team_id)
         self.assertFalse(TeamMembership.objects.filter(user=created_user).exists())
+        self.assertTrue(created_user.is_active)
+        self.assertTrue(created_user.username)
 
     def test_signup_saves_selected_team_to_profile_and_membership(self):
         """Verify signup persists the selected team on the user profile."""
         response = self.client.post(
             self.signup_url,
             {
-                "username": "new_team_user",
                 "email": "new_team_user@pixelpulse.com",
                 "first_name": "New",
                 "last_name": "Member",
@@ -413,7 +415,6 @@ class SignUpTeamSelectionTests(APITestCase):
         response = self.client.post(
             self.signup_url,
             {
-                "username": "outside_user",
                 "email": "outside_user@example.com",
                 "first_name": "Outside",
                 "last_name": "User",
@@ -425,6 +426,22 @@ class SignUpTeamSelectionTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("email", response.data)
+
+    def test_signup_requires_first_name_and_last_name(self):
+        """Verify signup rejects requests missing mandatory names."""
+        response = self.client.post(
+            self.signup_url,
+            {
+                "email": "missing_names@pixelpulse.com",
+                "password": "StrongPass123!",
+                "confirm_password": "StrongPass123!",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("first_name", response.data)
+        self.assertIn("last_name", response.data)
 
 
 class UserAccountEmailPolicyTests(APITestCase):
