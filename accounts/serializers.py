@@ -269,7 +269,8 @@ class UserAccountPatchSerializer(serializers.Serializer):
 class UserSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ("id", "first_name", "last_name")
+        # fields = ("id", "username", "first_name", "last_name")
+        exclude = ("password",)
 
 
 class TeamSerializer(serializers.ModelSerializer):
