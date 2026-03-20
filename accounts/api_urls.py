@@ -8,6 +8,7 @@ from .views import (
     ReceivedKudosByUserView,
     SkillCategoryViewSet,
     TeamViewSet,
+    UserListView
 )
 
 router = DefaultRouter()
@@ -16,6 +17,7 @@ router.register(r"skills", SkillCategoryViewSet, basename="skill")
 router.register(r"kudos", KudosViewSet, basename="kudos")
 
 urlpatterns = [
+    path("users/", UserListView.as_view(), name="user-list"),
     path("kudos/public/", PublicKudosListView.as_view(), name="kudos-public"),
     path(
         "users/<int:pk>/received-kudos/",
