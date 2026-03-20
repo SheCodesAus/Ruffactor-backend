@@ -10,6 +10,7 @@ from .models import Kudos, KudosComment, Profile, SkillCategory, Team, TeamMembe
 User = get_user_model()
 PIXEL_PULSE_EMAIL_SUFFIX = getattr(settings, "PIXEL_PULSE_EMAIL_SUFFIX", "+pp@gmail.com").lower()
 MAX_KUDOS_RECIPIENTS = 5
+MAX_KUDOS_SKILLS = 5
 
 
 def _normalize_pixel_pulse_email(email):
@@ -531,13 +532,29 @@ class KudosWriteSerializer(serializers.ModelSerializer):
         user = request.user
         instance = self.instance
         # Keep at least one skill tag on both create and update payloads.
-        skills = attrs.get("skill_ids")
-        if skills is None and instance is not None:
-            skills = list(instance.skills.all())
-        if not skills:
+        raw_skills = attrs.get("skill_ids")
+        if raw_skills is None and instance is not None:
+            raw_skills = list(instance.skills.all())
+        elif raw_skills is None:
+            raw_skills = []
+
+        deduplicated_skills = []
+        seen_skill_ids = set()
+        for skill in raw_skills:
+            if skill.id in seen_skill_ids:
+                continue
+            deduplicated_skills.append(skill)
+            seen_skill_ids.add(skill.id)
+
+        if not deduplicated_skills:
             raise serializers.ValidationError(
                 {"skill_ids": "At least one predefined skill tag is required."}
             )
+        if len(deduplicated_skills) > MAX_KUDOS_SKILLS:
+            raise serializers.ValidationError(
+                {"skill_ids": f"You can select up to {MAX_KUDOS_SKILLS} skills per kudos."}
+            )
+        attrs["resolved_skills"] = deduplicated_skills
 
         visibility = attrs.get(
             "visibility",
@@ -614,7 +631,8 @@ class KudosWriteSerializer(serializers.ModelSerializer):
         recipients = validated_data.pop("resolved_recipients")
         validated_data.pop("recipient_ids", None)
         validated_data.pop("recipient", None)
-        skill_ids = validated_data.pop("skill_ids", [])
+        skill_ids = validated_data.pop("resolved_skills", [])
+        validated_data.pop("skill_ids", None)
         target_team_ids = validated_data.pop("target_team_ids", [])
         kudos = Kudos.objects.create(
             sender=self.context["request"].user,
@@ -638,7 +656,8 @@ class KudosWriteSerializer(serializers.ModelSerializer):
         """
         recipients = validated_data.pop("resolved_recipients", None)
         validated_data.pop("recipient_ids", None)
-        skill_ids = validated_data.pop("skill_ids", None)
+        skill_ids = validated_data.pop("resolved_skills", None)
+        validated_data.pop("skill_ids", None)
         target_team_ids = validated_data.pop("target_team_ids", None)
         primary_recipient = validated_data.pop("recipient", None)
         for attr, value in validated_data.items():

@@ -1,6 +1,8 @@
 from datetime import timedelta
 from unittest.mock import patch
+from importlib import import_module
 
+from django.apps import apps as django_apps
 from django.contrib.admin.sites import site
 from django.contrib.auth import get_user_model
 from django.db import connections
@@ -124,6 +126,39 @@ class TeamModelSetupTests(TestCase):
     def _drop_legacy_auth_user_table(self):
         with connections["default"].cursor() as cursor:
             cursor.execute("DROP TABLE IF EXISTS auth_user")
+
+    def test_default_skills_are_seeded(self):
+        """Verify the required default skill records exist after migrations run."""
+        expected_names = {
+            "Sales",
+            "Account Management",
+            "Lead Generation",
+            "Communication",
+            "Project Management",
+            "Business Administration",
+            "Reporting",
+            "Website Development",
+        }
+
+        self.assertTrue(
+            expected_names.issubset(set(SkillCategory.objects.values_list("name", flat=True)))
+        )
+
+    def test_default_skill_normalization_reactivates_existing_required_skills(self):
+        """Verify normalization fixes inactive/default-skill drift on existing rows."""
+        sales_skill = SkillCategory.objects.get(name="Sales")
+        sales_skill.slug = "old-sales"
+        sales_skill.description = "Outdated description"
+        sales_skill.is_active = False
+        sales_skill.save(update_fields=["slug", "description", "is_active"])
+
+        normalize_module = import_module("accounts.migrations.0012_normalize_default_skills")
+        normalize_module.normalize_default_skills(django_apps, None)
+
+        sales_skill.refresh_from_db()
+        self.assertEqual(sales_skill.slug, "sales")
+        self.assertEqual(sales_skill.description, "Sales skill")
+        self.assertTrue(sales_skill.is_active)
 
 
 class AdminUserManagementTests(TestCase):
@@ -679,6 +714,31 @@ class KudosApiTicketTests(APITestCase):
             slug="legacy",
             is_active=False,
         )
+        self.extra_skill_one = SkillCategory.objects.create(
+            name="Planning",
+            slug="planning",
+            is_active=True,
+        )
+        self.extra_skill_two = SkillCategory.objects.create(
+            name="Execution",
+            slug="execution",
+            is_active=True,
+        )
+        self.extra_skill_three = SkillCategory.objects.create(
+            name="Coaching",
+            slug="coaching",
+            is_active=True,
+        )
+        self.extra_skill_four = SkillCategory.objects.create(
+            name="Strategy",
+            slug="strategy",
+            is_active=True,
+        )
+        self.extra_skill_five = SkillCategory.objects.create(
+            name="Analysis",
+            slug="analysis",
+            is_active=True,
+        )
         self.kudos_url = "/api/kudos/"
         self.public_kudos_url = "/api/kudos/public/"
         self.received_kudos_url = f"/api/users/{self.recipient.id}/received-kudos/"
@@ -884,6 +944,57 @@ class KudosApiTicketTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("skill_ids", response.data)
+
+    def test_post_kudos_rejects_more_than_five_skills(self):
+        """Verify kudos creation returns a validation error when skill count exceeds 5."""
+        self.client.force_authenticate(user=self.sender)
+        response = self.client.post(
+            self.kudos_url,
+            {
+                "recipient": self.recipient.id,
+                "message": "Too many skills selected",
+                "visibility": Kudos.Visibility.PUBLIC,
+                "skill_ids": [
+                    self.skill.id,
+                    self.extra_skill_one.id,
+                    self.extra_skill_two.id,
+                    self.extra_skill_three.id,
+                    self.extra_skill_four.id,
+                    self.extra_skill_five.id,
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data["skill_ids"][0],
+            "You can select up to 5 skills per kudos.",
+        )
+
+    def test_post_kudos_allows_duplicate_skill_ids_when_unique_count_is_five(self):
+        """Verify duplicate submitted skills do not count against the 5-skill limit."""
+        self.client.force_authenticate(user=self.sender)
+        response = self.client.post(
+            self.kudos_url,
+            {
+                "recipient": self.recipient.id,
+                "message": "Duplicate skills should be deduplicated",
+                "visibility": Kudos.Visibility.PUBLIC,
+                "skill_ids": [
+                    self.skill.id,
+                    self.skill.id,
+                    self.extra_skill_one.id,
+                    self.extra_skill_two.id,
+                    self.extra_skill_three.id,
+                    self.extra_skill_four.id,
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(len(response.data["skills"]), 5)
 
     def test_post_kudos_can_save_and_display_team_tag(self):
         """Verify team tags can be attached and returned on kudos responses."""
