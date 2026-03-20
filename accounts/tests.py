@@ -1,7 +1,9 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.admin.sites import site
 from django.contrib.auth import get_user_model
+from django.db import connections
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -9,10 +11,29 @@ from rest_framework.authtoken.models import Token
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from .apps import check_custom_user_schema_compatibility
 from .models import Collection, Event, Kudos, Profile, SkillCategory, Team, TeamMembership
 
 
 User = get_user_model()
+
+
+def create_project_user(*, email, password="StrongPass123!", **extra_fields):
+    """Create a test user using email as the project's login identifier."""
+    return User.objects.create_user(
+        password=password,
+        email=email,
+        **extra_fields,
+    )
+
+
+def create_project_superuser(*, email, password="StrongPass123!", **extra_fields):
+    """Create a test superuser using email as the project's login identifier."""
+    return User.objects.create_superuser(
+        password=password,
+        email=email,
+        **extra_fields,
+    )
 
 
 class TeamModelSetupTests(TestCase):
@@ -28,19 +49,91 @@ class TeamModelSetupTests(TestCase):
 
         self.assertTrue(expected_names.issubset(set(Team.objects.values_list("name", flat=True))))
 
+    def test_custom_user_deployment_check_flags_legacy_auth_user_schema(self):
+        """Verify deployment checks catch legacy databases without the custom user table."""
+        legacy_connection = type(
+            "LegacyConnection",
+            (),
+            {"introspection": type("Introspection", (), {"table_names": lambda self: ["auth_user"]})()},
+        )()
+        with patch(
+            "accounts.apps.connections",
+            {"default": legacy_connection},
+        ):
+            errors = check_custom_user_schema_compatibility(None, databases=["default"])
+
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0].id, "accounts.E001")
+        self.assertEqual(errors[0].obj, "database:default")
+
+    def test_custom_user_deployment_check_allows_custom_user_schema(self):
+        """Verify deployment checks pass when the custom user table is present."""
+        custom_connection = type(
+            "CustomConnection",
+            (),
+            {"introspection": type("Introspection", (), {"table_names": lambda self: ["accounts_user"]})()},
+        )()
+        with patch(
+            "accounts.apps.connections",
+            {"default": custom_connection},
+        ):
+            errors = check_custom_user_schema_compatibility(None, databases=["default"])
+
+        self.assertEqual(errors, [])
+
+    def test_custom_user_save_mirrors_into_legacy_auth_user_when_table_exists(self):
+        """Verify new custom users keep an auth_user mirror for legacy FK compatibility."""
+        self.addCleanup(self._drop_legacy_auth_user_table)
+        with connections["default"].cursor() as cursor:
+            cursor.execute(
+                """
+                CREATE TABLE auth_user (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    password varchar(128) NOT NULL,
+                    last_login datetime NULL,
+                    is_superuser bool NOT NULL,
+                    username varchar(150) NOT NULL,
+                    last_name varchar(150) NOT NULL,
+                    email varchar(254) NOT NULL,
+                    is_staff bool NOT NULL,
+                    is_active bool NOT NULL,
+                    date_joined datetime NOT NULL,
+                    first_name varchar(150) NOT NULL
+                )
+                """
+            )
+
+        user = create_project_user(
+            email="legacy_mirror+pp@gmail.com",
+            first_name="Legacy",
+            last_name="Mirror",
+        )
+
+        with connections["default"].cursor() as cursor:
+            cursor.execute(
+                "SELECT username, email, first_name, last_name FROM auth_user WHERE id = %s",
+                [user.id],
+            )
+            row = cursor.fetchone()
+
+        self.assertEqual(
+            row,
+            ("legacy_mirror+pp@gmail.com", "legacy_mirror+pp@gmail.com", "Legacy", "Mirror"),
+        )
+
+    def _drop_legacy_auth_user_table(self):
+        with connections["default"].cursor() as cursor:
+            cursor.execute("DROP TABLE IF EXISTS auth_user")
+
 
 class AdminUserManagementTests(TestCase):
     def setUp(self):
         """Create an admin user and a target user for Django admin management tests."""
-        self.admin_user = User.objects.create_superuser(
-            username="site_admin",
+        self.admin_user = create_project_superuser(
             email="site_admin@example.com",
-            password="StrongPass123!",
         )
-        self.target_user = User.objects.create_user(
-            username="managed_user",
+        self.target_user = create_project_user(
             email="managed_user@example.com",
-            password="StrongPass123!",
             first_name="Managed",
             last_name="Person",
             is_active=True,
@@ -56,19 +149,19 @@ class AdminUserManagementTests(TestCase):
 
     def test_admin_user_changelist_shows_users(self):
         """Verify admins can open the user list in Django admin."""
-        response = self.client.get(reverse("admin:auth_user_changelist"))
+        response = self.client.get(reverse("admin:accounts_user_changelist"))
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertContains(response, "managed_user")
+        self.assertContains(response, "Managed")
+        self.assertContains(response, "Person")
         self.assertContains(response, "managed_user@example.com")
 
     def test_admin_can_update_user_active_state(self):
         """Verify admins can change a user from active to inactive in admin."""
-        change_url = reverse("admin:auth_user_change", args=[self.target_user.pk])
+        change_url = reverse("admin:accounts_user_change", args=[self.target_user.pk])
         response = self.client.post(
             change_url,
             {
-                "username": self.target_user.username,
                 "email": self.target_user.email,
                 "first_name": self.target_user.first_name,
                 "last_name": self.target_user.last_name,
@@ -126,10 +219,8 @@ class UserAccountViewTests(APITestCase):
         This creates one authenticated user and stores the `/auth/user/` URL used
         by PATCH and DELETE test scenarios.
         """
-        self.user = User.objects.create_user(
-            username="patch_delete_user",
+        self.user = create_project_user(
             email="patch_delete_user@example.com",
-            password="StrongPass123!",
             first_name="Before",
         )
         self.url = "/auth/user/"
@@ -175,10 +266,8 @@ class UserAccountViewTests(APITestCase):
             - response includes explanatory detail message
             - user record remains in database
         """
-        recipient = User.objects.create_user(
-            username="patch_delete_recipient",
+        recipient = create_project_user(
             email="patch_delete_recipient@example.com",
-            password="StrongPass123!",
         )
         Kudos.objects.create(
             sender=self.user,
@@ -199,8 +288,9 @@ class UserAccountViewTests(APITestCase):
         response = self.client.post(
             self.url,
             {
-                "username": "new_user",
                 "email": "new_user@example.com",
+                "first_name": "New",
+                "last_name": "User",
                 "password": "StrongPass123!",
                 "confirm_password": "StrongPass123!",
             },
@@ -216,10 +306,8 @@ class UserAccountViewTests(APITestCase):
 class AuthenticationAccessTests(APITestCase):
     def setUp(self):
         """Create a user and URLs used to verify anonymous access rules."""
-        self.user = User.objects.create_user(
-            username="login_user",
+        self.user = create_project_user(
             email="login_user@example.com",
-            password="StrongPass123!",
         )
         self.login_url = "/auth/login/"
         self.signup_url = "/auth/signup/"
@@ -272,23 +360,25 @@ class AuthenticationAccessTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertContains(response, "Log in")
 
-    def test_signup_requires_authentication(self):
-        """Verify signup endpoint is no longer publicly accessible."""
+    def test_signup_allows_anonymous_access(self):
+        """Verify signup is available to anonymous users."""
         response = self.client.post(
             self.signup_url,
             {
-                "username": "signup_user",
-                "email": "signup_user@example.com",
+                "email": "signup_user+pp@gmail.com",
+                "first_name": "Signup",
+                "last_name": "User",
                 "password": "StrongPass123!",
                 "confirm_password": "StrongPass123!",
             },
             format="json",
         )
 
-        self.assertIn(
-            response.status_code,
-            {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN},
-        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["user"]["email"], "signup_user+pp@gmail.com")
+        self.assertTrue(response.data["user"]["is_active"])
+        self.assertEqual(response.data["user"]["first_name"], "Signup")
+        self.assertEqual(response.data["user"]["last_name"], "User")
 
     def test_public_kudos_feed_requires_authentication(self):
         """Verify anonymous users cannot access the read-only kudos feed."""
@@ -348,10 +438,8 @@ class AuthenticationAccessTests(APITestCase):
 class SignUpTeamSelectionTests(APITestCase):
     def setUp(self):
         """Create an authenticated requester and teams for signup flow tests."""
-        self.request_user = User.objects.create_user(
-            username="signup_requester",
+        self.request_user = create_project_user(
             email="signup_requester@example.com",
-            password="StrongPass123!",
         )
         self.team = Team.objects.create(
             name="Engineering",
@@ -366,8 +454,7 @@ class SignUpTeamSelectionTests(APITestCase):
         response = self.client.post(
             self.signup_url,
             {
-                "username": "new_teamless_user",
-                "email": "new_teamless_user@pixelpulse.com",
+                "email": "new_teamless_user+pp@gmail.com",
                 "first_name": "Teamless",
                 "last_name": "User",
                 "password": "StrongPass123!",
@@ -377,19 +464,20 @@ class SignUpTeamSelectionTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        created_user = User.objects.get(email="new_teamless_user@pixelpulse.com")
+        created_user = User.objects.get(email="new_teamless_user+pp@gmail.com")
         created_profile, _ = Profile.objects.get_or_create(user=created_user)
 
         self.assertIsNone(created_profile.active_team_id)
         self.assertFalse(TeamMembership.objects.filter(user=created_user).exists())
+        self.assertTrue(created_user.is_active)
+        self.assertEqual(created_user.email, "new_teamless_user+pp@gmail.com")
 
     def test_signup_saves_selected_team_to_profile_and_membership(self):
         """Verify signup persists the selected team on the user profile."""
         response = self.client.post(
             self.signup_url,
             {
-                "username": "new_team_user",
-                "email": "new_team_user@pixelpulse.com",
+                "email": "new_team_user+pp@gmail.com",
                 "first_name": "New",
                 "last_name": "Member",
                 "team_id": self.team.id,
@@ -400,7 +488,7 @@ class SignUpTeamSelectionTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        created_user = User.objects.get(email="new_team_user@pixelpulse.com")
+        created_user = User.objects.get(email="new_team_user+pp@gmail.com")
         created_profile = Profile.objects.get(user=created_user)
 
         self.assertEqual(created_profile.active_team_id, self.team.id)
@@ -408,12 +496,33 @@ class SignUpTeamSelectionTests(APITestCase):
             TeamMembership.objects.filter(user=created_user, team=self.team).exists()
         )
 
+    def test_signup_rolls_back_user_when_team_setup_fails(self):
+        """Verify signup does not leave a partial user record if team setup crashes."""
+        with patch(
+            "accounts.serializers.TeamMembership.objects.get_or_create",
+            side_effect=RuntimeError("team setup failed"),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.client.post(
+                    self.signup_url,
+                    {
+                        "email": "rollback_user+pp@gmail.com",
+                        "first_name": "Rollback",
+                        "last_name": "User",
+                        "team_id": self.team.id,
+                        "password": "StrongPass123!",
+                        "confirm_password": "StrongPass123!",
+                    },
+                    format="json",
+                )
+
+        self.assertFalse(User.objects.filter(email="rollback_user+pp@gmail.com").exists())
+
     def test_signup_rejects_non_pixel_pulse_email(self):
-        """Verify signup requires a Pixel Pulse email domain."""
+        """Verify signup requires the approved +pp@gmail.com email suffix."""
         response = self.client.post(
             self.signup_url,
             {
-                "username": "outside_user",
                 "email": "outside_user@example.com",
                 "first_name": "Outside",
                 "last_name": "User",
@@ -426,18 +535,32 @@ class SignUpTeamSelectionTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("email", response.data)
 
+    def test_signup_requires_first_name_and_last_name(self):
+        """Verify signup rejects requests missing mandatory names."""
+        response = self.client.post(
+            self.signup_url,
+            {
+                "email": "missing_names+pp@gmail.com",
+                "password": "StrongPass123!",
+                "confirm_password": "StrongPass123!",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("first_name", response.data)
+        self.assertIn("last_name", response.data)
+
 
 class UserAccountEmailPolicyTests(APITestCase):
     def setUp(self):
         """Create a logged-in user for profile email policy checks."""
-        self.user = User.objects.create_user(
-            username="pixelpulse_user",
-            email="pixelpulse_user@pixelpulse.com",
-            password="StrongPass123!",
+        self.user = create_project_user(
+            email="pixelpulse_user+pp@gmail.com",
         )
 
     def test_profile_update_rejects_non_pixel_pulse_email(self):
-        """Verify users cannot change their profile email outside the company domain."""
+        """Verify users cannot change their profile email outside the approved suffix."""
         self.client.force_authenticate(user=self.user)
         response = self.client.patch(
             "/auth/user/",
@@ -452,16 +575,12 @@ class UserAccountEmailPolicyTests(APITestCase):
 class TeamMembershipRuleTests(APITestCase):
     def setUp(self):
         """Create users and teams used to verify one-team-per-user enforcement."""
-        self.staff = User.objects.create_user(
-            username="team_admin",
+        self.staff = create_project_user(
             email="team_admin@example.com",
-            password="StrongPass123!",
             is_staff=True,
         )
-        self.member = User.objects.create_user(
-            username="team_member",
+        self.member = create_project_user(
             email="team_member@example.com",
-            password="StrongPass123!",
         )
         self.sales_team = Team.objects.create(
             name="Regional Sales",
@@ -513,41 +632,27 @@ class KudosApiTicketTests(APITestCase):
         This creates sender/recipient/viewer/staff users, active and inactive skills,
         and stores the base `/api/kudos/` endpoint URL.
         """
-        self.sender = User.objects.create_user(
-            username="kudos_sender",
+        self.sender = create_project_user(
             email="kudos_sender@example.com",
-            password="StrongPass123!",
         )
-        self.recipient = User.objects.create_user(
-            username="kudos_recipient",
+        self.recipient = create_project_user(
             email="kudos_recipient@example.com",
-            password="StrongPass123!",
         )
-        self.viewer = User.objects.create_user(
-            username="kudos_viewer",
+        self.viewer = create_project_user(
             email="kudos_viewer@example.com",
-            password="StrongPass123!",
         )
-        self.staff = User.objects.create_user(
-            username="kudos_staff",
+        self.staff = create_project_user(
             email="kudos_staff@example.com",
-            password="StrongPass123!",
             is_staff=True,
         )
-        self.extra_recipient_one = User.objects.create_user(
-            username="kudos_extra_one",
+        self.extra_recipient_one = create_project_user(
             email="kudos_extra_one@example.com",
-            password="StrongPass123!",
         )
-        self.extra_recipient_two = User.objects.create_user(
-            username="kudos_extra_two",
+        self.extra_recipient_two = create_project_user(
             email="kudos_extra_two@example.com",
-            password="StrongPass123!",
         )
-        self.extra_recipient_three = User.objects.create_user(
-            username="kudos_extra_three",
+        self.extra_recipient_three = create_project_user(
             email="kudos_extra_three@example.com",
-            password="StrongPass123!",
         )
         self.skill = SkillCategory.objects.create(
             name="Teamwork",
@@ -1072,7 +1177,7 @@ class KudosApiTicketTests(APITestCase):
 
         self.client.force_authenticate(user=self.sender)
 
-        sender_response = self.client.get(f"{self.kudos_url}?q={self.sender.username}")
+        sender_response = self.client.get(f"{self.kudos_url}?q={self.sender.email}")
         sender_ids = [item["id"] for item in sender_response.data["results"]]
 
         recipient_response = self.client.get(f"{self.kudos_url}?q={self.recipient.email}")
@@ -1113,7 +1218,7 @@ class KudosApiTicketTests(APITestCase):
 
         self.client.force_authenticate(user=self.sender)
         response = self.client.get(
-            f"{self.kudos_url}?sender={self.sender.username}&recipient={self.recipient.email}"
+            f"{self.kudos_url}?sender={self.sender.email}&recipient={self.recipient.email}"
         )
         result_ids = [item["id"] for item in response.data["results"]]
 

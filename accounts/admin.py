@@ -36,17 +36,34 @@ except admin.sites.NotRegistered:
 class UserAdmin(DjangoUserAdmin):
     inlines = (ProfileInline,)
     list_display = (
-        "username",
-        "email",
         "first_name",
         "last_name",
+        "email",
         "is_staff",
         "is_active",
         "date_joined",
     )
     list_filter = ("is_staff", "is_superuser", "is_active", "groups")
-    search_fields = ("username", "email", "first_name", "last_name")
-    ordering = ("username",)
+    search_fields = ("email", "first_name", "last_name")
+    ordering = ("first_name", "last_name", "email")
+    fieldsets = (
+        (None, {"fields": ("email", "password")}),
+        ("Personal info", {"fields": ("first_name", "last_name")}),
+        (
+            "Permissions",
+            {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")},
+        ),
+        ("Important dates", {"fields": ("last_login", "date_joined")}),
+    )
+    add_fieldsets = (
+        (
+            None,
+            {
+                "classes": ("wide",),
+                "fields": ("email", "first_name", "last_name", "password1", "password2", "is_staff", "is_active"),
+            },
+        ),
+    )
 
 
 admin.site.site_header = "Ruffactor Admin Dashboard"
@@ -62,9 +79,14 @@ class TeamAdmin(admin.ModelAdmin):
 
 @admin.register(TeamMembership)
 class TeamMembershipAdmin(admin.ModelAdmin):
-    list_display = ("team", "user", "role", "created_at")
+    list_display = ("team", "user_label", "role", "created_at")
     list_filter = ("role", "team")
-    search_fields = ("team__name", "user__username", "user__email")
+    search_fields = ("team__name", "user__email", "user__first_name", "user__last_name")
+
+    def user_label(self, obj):
+        return " ".join(part for part in [obj.user.first_name, obj.user.last_name] if part).strip() or obj.user.email
+
+    user_label.short_description = "User"
 
 
 @admin.register(Event)
@@ -86,9 +108,14 @@ class CollectionAdmin(admin.ModelAdmin):
 
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
-    list_display = ("user", "display_name", "active_team", "created_at")
+    list_display = ("user_label", "display_name", "active_team", "created_at")
     list_filter = ("active_team",)
-    search_fields = ("user__username", "user__email", "display_name")
+    search_fields = ("user__email", "user__first_name", "user__last_name", "display_name")
+
+    def user_label(self, obj):
+        return " ".join(part for part in [obj.user.first_name, obj.user.last_name] if part).strip() or obj.user.email
+
+    user_label.short_description = "User"
 
 
 @admin.register(SkillCategory)
@@ -102,7 +129,7 @@ class SkillCategoryAdmin(admin.ModelAdmin):
 class KudosAdmin(admin.ModelAdmin):
     list_display = (
         "id",
-        "sender",
+        "sender_label",
         "recipient_list",
         "visibility",
         "is_approved",
@@ -110,14 +137,35 @@ class KudosAdmin(admin.ModelAdmin):
         "created_at",
     )
     list_filter = ("visibility", "is_approved", "is_archived")
-    search_fields = ("message", "sender__username", "recipient__username", "recipients__username")
+    search_fields = (
+        "message",
+        "sender__email",
+        "sender__first_name",
+        "sender__last_name",
+        "recipient__email",
+        "recipient__first_name",
+        "recipient__last_name",
+        "recipients__email",
+        "recipients__first_name",
+        "recipients__last_name",
+    )
+
+    def sender_label(self, obj):
+        return " ".join(part for part in [obj.sender.first_name, obj.sender.last_name] if part).strip() or obj.sender.email
+
+    sender_label.short_description = "Sender"
 
     def recipient_list(self, obj):
-        recipients = list(obj.recipients.values_list("username", flat=True))
+        recipients = [
+            " ".join(part for part in [user.first_name, user.last_name] if part).strip() or user.email
+            for user in obj.recipients.all()
+        ]
         if recipients:
             return ", ".join(recipients)
         if obj.recipient_id:
-            return obj.recipient.username
+            return " ".join(
+                part for part in [obj.recipient.first_name, obj.recipient.last_name] if part
+            ).strip() or obj.recipient.email
         return ""
 
     recipient_list.short_description = "Recipients"
@@ -139,13 +187,23 @@ class KudosSkillTagAdmin(admin.ModelAdmin):
 
 @admin.register(KudosRecipient)
 class KudosRecipientAdmin(admin.ModelAdmin):
-    list_display = ("kudos", "user", "created_at")
+    list_display = ("kudos", "user_label", "created_at")
     list_filter = ("created_at",)
-    search_fields = ("kudos__message", "user__username", "user__email")
+    search_fields = ("kudos__message", "user__email", "user__first_name", "user__last_name")
+
+    def user_label(self, obj):
+        return " ".join(part for part in [obj.user.first_name, obj.user.last_name] if part).strip() or obj.user.email
+
+    user_label.short_description = "User"
 
 
 @admin.register(KudosComment)
 class KudosCommentAdmin(admin.ModelAdmin):
-    list_display = ("id", "kudos", "author", "created_at")
-    search_fields = ("body", "author__username", "kudos__message")
+    list_display = ("id", "kudos", "author_label", "created_at")
+    search_fields = ("body", "author__email", "author__first_name", "author__last_name", "kudos__message")
     list_filter = ("created_at",)
+
+    def author_label(self, obj):
+        return " ".join(part for part in [obj.author.first_name, obj.author.last_name] if part).strip() or obj.author.email
+
+    author_label.short_description = "Author"
