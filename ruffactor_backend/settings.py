@@ -12,20 +12,61 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 
 from pathlib import Path
 
+import os
+try:
+    import dj_database_url
+except ImportError:  # pragma: no cover - local fallback when optional package is absent
+    dj_database_url = None
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - local fallback when optional package is absent
+    def load_dotenv(*args, **kwargs):
+        return False
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
+
+
+def _env_flag(name, default=False):
+    return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_list(name, default=""):
+    value = os.getenv(name, default)
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+try:
+    import corsheaders  # noqa: F401
+    HAS_CORSHEADERS = True
+except ImportError:  # pragma: no cover - local fallback when optional package is absent
+    HAS_CORSHEADERS = False
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-3#w-8j)j4_@x&j)%4#x6b@r*$vhjupyzhg#mj19ntj-c*%-a$)'
+# DJANGO_SECRET_KEY = (cvp*^1x7^srz$ien_7kqscgrb9b*63a0y#b9-gwxnyfvh7vos
+SECRET_KEY = os.getenv(
+    "DJANGO_SECRET_KEY",
+    '(cvp*^1x7^srz$ien_7kqscgrb9b*63a0y#b9-gwxnyfvh7vos',
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = _env_flag("DJANGO_DEBUG", default=False)
+
+ALLOWED_HOSTS = _env_list(
+    "ALLOWED_HOSTS",
+    "127.0.0.1,localhost,testserver,.herokuapp.com",
+)
 
 ALLOWED_HOSTS = ["*"]
+# CORS_ALLOWED_ORIGINS = _env_list("CORS_ALLOWED_ORIGINS")
+# CORS_ALLOW_ALL_ORIGINS = _env_flag("CORS_ALLOW_ALL_ORIGINS", default=False)
+# CSRF_TRUSTED_ORIGINS = _env_list("CSRF_TRUSTED_ORIGINS")
 
 
 # Application definition
@@ -42,8 +83,12 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
 ]
 
+if HAS_CORSHEADERS:
+    INSTALLED_APPS.insert(2, 'corsheaders')
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -52,6 +97,9 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+if HAS_CORSHEADERS:
+    MIDDLEWARE.insert(3, 'corsheaders.middleware.CorsMiddleware')
 
 ROOT_URLCONF = 'ruffactor_backend.urls'
 
@@ -82,6 +130,10 @@ DATABASES = {
         'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
+
+if dj_database_url is not None:
+    db_from_env = dj_database_url.config(conn_max_age=500)
+    DATABASES['default'].update(db_from_env)
 
 
 # Password validation
@@ -118,9 +170,15 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 LOGIN_URL = '/auth/login/'
 AUTH_USER_MODEL = 'accounts.User'
+
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
