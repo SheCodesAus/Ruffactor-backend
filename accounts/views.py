@@ -703,7 +703,7 @@ class SkillCategoryViewSet(
         return SkillCategory.objects.all()
 
 
-class UserKudosByUserView(generics.ListAPIView):
+class AllKudosByUserView(generics.ListAPIView):
     """Return all kudos related to a specific user, scoped by requester visibility."""
 
     permission_classes = [permissions.IsAuthenticated]
@@ -720,7 +720,7 @@ class UserKudosByUserView(generics.ListAPIView):
             .distinct()
         )
     
-    
+
 class ReceivedKudosByUserView(generics.ListAPIView):
     """Return kudos received by a specific user, scoped by requester visibility."""
 

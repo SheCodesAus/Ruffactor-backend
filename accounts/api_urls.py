@@ -2,10 +2,11 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from .views import (
+    AllKudosByUserView,
+    ReceivedKudosByUserView,
     GivenKudosByUserView,
     KudosViewSet,
     PublicKudosListView,
-    ReceivedKudosByUserView,
     SkillCategoryViewSet,
     TeamViewSet,
     UserListView
@@ -19,6 +20,11 @@ router.register(r"kudos", KudosViewSet, basename="kudos")
 urlpatterns = [
     path("users/", UserListView.as_view(), name="user-list"),
     path("kudos/public/", PublicKudosListView.as_view(), name="kudos-public"),
+    path(
+        "users/<int:pk>/kudos/",
+        AllKudosByUserView.as_view(),
+        name="user-all-kudos",
+        ),
     path(
         "users/<int:pk>/received-kudos/",
         ReceivedKudosByUserView.as_view(),
