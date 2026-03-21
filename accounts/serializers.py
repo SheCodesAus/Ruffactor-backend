@@ -3,6 +3,9 @@ from django.contrib.auth import get_user_model, password_validation
 from django.db import transaction
 from django.utils.text import slugify
 from rest_framework import serializers
+from django.contrib.auth.tokens import PasswordResetTokenGenerator
+from django.utils.encoding import force_str
+from django.utils.http import urlsafe_base64_decode
 
 from .models import Kudos, KudosComment, Profile, SkillCategory, Team, TeamMembership
 
@@ -21,7 +24,6 @@ def _normalize_pixel_pulse_email(email):
             "Please use your validated email ending with +pp@gmail.com."
         )
     return normalized
-
 
 class SignUpSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(required=True)
@@ -121,6 +123,66 @@ class SignUpSerializer(serializers.ModelSerializer):
         return user
 
 
+# Forgot password
+def _normalize_email(email):
+    return email.strip().lower()
+
+def _get_email_candidates(email):
+    email = _normalize_email(email)
+
+    if not email.endswith("@gmail.com"):
+        return [email]
+
+    local, domain = email.split("@")
+
+    if "+" in local:
+        base = local.split("+")[0]
+        return [
+            email,
+            f"{base}@{domain}",
+            f"{base}+pp@{domain}",
+        ]
+
+    return [
+        email,
+        f"{local}+pp@{domain}",
+    ]
+
+class ForgotPasswordRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        return _normalize_email(value)
+
+
+class ResetPasswordConfirmSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    password = serializers.CharField(write_only=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        if attrs["password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError(
+                {"confirm_password": "Passwords do not match."}
+            )
+
+        try:
+            user_id = force_str(urlsafe_base64_decode(attrs["uid"]))
+            user = User.objects.get(pk=user_id)
+        except (User.DoesNotExist, ValueError, TypeError, OverflowError):
+            raise serializers.ValidationError({"uid": "Invalid reset link."})
+
+        token_generator = PasswordResetTokenGenerator()
+        if not token_generator.check_token(user, attrs["token"]):
+            raise serializers.ValidationError({"token": "Invalid or expired reset link."})
+
+        password_validation.validate_password(attrs["password"], user=user)
+
+        attrs["user"] = user
+        return attrs
+    
+
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
@@ -164,7 +226,6 @@ class LoginSerializer(serializers.Serializer):
 
         attrs["user"] = user
         return attrs
-
 
 class UserAccountPatchSerializer(serializers.Serializer):
     email = serializers.EmailField(required=False)

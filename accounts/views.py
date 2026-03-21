@@ -14,6 +14,10 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.contrib.auth.tokens import PasswordResetTokenGenerator
+from django.core.mail import send_mail
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 
 from .models import Kudos, KudosComment, Profile, SkillCategory, Team, TeamMembership
 from .serializers import (
@@ -29,7 +33,8 @@ from .serializers import (
     TeamMembershipSerializer,
     TeamMembershipWriteSerializer,
     TeamSerializer,
-    UserSummarySerializer
+    UserSummarySerializer,
+    ResetPasswordConfirmSerializer,
 )
 
 User = get_user_model()
@@ -267,6 +272,84 @@ class SignUpView(generics.CreateAPIView):
                 "user": _serialize_user_payload(user),
             },
             status=status.HTTP_201_CREATED,
+        )
+
+# forgot password
+def _build_password_reset_link(request, user):
+    token_generator = PasswordResetTokenGenerator()
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    token = token_generator.make_token(user)
+
+    frontend_base_url = getattr(
+        settings,
+        "FRONTEND_PASSWORD_RESET_URL",
+        "http://localhost:3000/reset-password",
+    )
+
+    return f"{frontend_base_url}?uid={uid}&token={token}"
+
+
+# accounts/views.py
+
+class ForgotPasswordView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = ForgotPasswordRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        email = serializer.validated_data["email"]
+        user = None
+
+        for candidate in _gmail_alias_candidates(email):
+            try:
+                user = User.objects.get(email__iexact=candidate, is_active=True)
+                break
+            except User.DoesNotExist:
+                continue
+
+        if user:
+            reset_link = _build_password_reset_link(request, user)
+
+            send_mail(
+                subject="Reset your password",
+                message=(
+                    f"Hi {user.first_name},\n\n"
+                    f"Use the link below to reset your password:\n\n"
+                    f"{reset_link}\n\n"
+                    "If you did not request this, you can ignore this email."
+                ),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+                fail_silently=False,
+            )
+
+        return Response(
+            {
+                "message": "If an account exists for that email, a password reset email has been sent."
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ResetPasswordConfirmView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = ResetPasswordConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = serializer.validated_data["user"]
+        new_password = serializer.validated_data["password"]
+
+        user.set_password(new_password)
+        user.save()
+
+        Token.objects.filter(user=user).delete()
+
+        return Response(
+            {"message": "Password has been reset successfully."},
+            status=status.HTTP_200_OK,
         )
 
 
