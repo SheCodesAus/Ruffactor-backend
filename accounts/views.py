@@ -39,6 +39,7 @@ from .serializers import (
     TeamMembershipWriteSerializer,
     TeamSerializer,
     UserSummarySerializer,
+    ForgotPasswordRequestSerializer,
     ResetPasswordConfirmSerializer,
 )
 
