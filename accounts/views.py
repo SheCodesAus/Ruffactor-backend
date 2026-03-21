@@ -363,7 +363,7 @@ class ForgotPasswordView(APIView):
                     pass
 
             if user:
-                reset_link = _build_password_reset_link(user)
+                reset_link = _build_password_reset_link(request, user)
                 print("reset_link =", reset_link)
 
                 send_mail(
