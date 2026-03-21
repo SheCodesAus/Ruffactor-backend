@@ -63,9 +63,10 @@ ALLOWED_HOSTS = _env_list(
     "127.0.0.1,localhost,testserver,.herokuapp.com",
 )
 
-CORS_ALLOWED_ORIGINS = _env_list("CORS_ALLOWED_ORIGINS")
-CORS_ALLOW_ALL_ORIGINS = _env_flag("CORS_ALLOW_ALL_ORIGINS", default=False)
-CSRF_TRUSTED_ORIGINS = _env_list("CSRF_TRUSTED_ORIGINS")
+ALLOWED_HOSTS = ["*"]
+# CORS_ALLOWED_ORIGINS = _env_list("CORS_ALLOWED_ORIGINS")
+# CORS_ALLOW_ALL_ORIGINS = _env_flag("CORS_ALLOW_ALL_ORIGINS", default=False)
+# CSRF_TRUSTED_ORIGINS = _env_list("CSRF_TRUSTED_ORIGINS")
 
 
 # Application definition

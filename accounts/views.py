@@ -703,6 +703,24 @@ class SkillCategoryViewSet(
         return SkillCategory.objects.all()
 
 
+class AllKudosByUserView(generics.ListAPIView):
+    """Return all kudos related to a specific user, scoped by requester visibility."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = KudosReadSerializer
+
+    def get_queryset(self):
+        user = get_object_or_404(User, pk=self.kwargs["pk"])
+        return (
+            _visible_kudos_queryset(self.request.user)
+            .filter(
+                Q(sender=user) | Q(recipient=user) | Q(recipients=user)
+            )
+            .order_by("-created_at")
+            .distinct()
+        )
+    
+
 class ReceivedKudosByUserView(generics.ListAPIView):
     """Return kudos received by a specific user, scoped by requester visibility."""
 
