@@ -41,6 +41,7 @@ from .serializers import (
     UserSummarySerializer,
     ForgotPasswordRequestSerializer,
     ResetPasswordConfirmSerializer,
+    _get_email_candidates,
 )
 
 User = get_user_model()
