@@ -1,5 +1,5 @@
 from django.contrib.auth import get_user_model
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import BaseCommand
 from django.db import connections, router, transaction
 
 
@@ -18,7 +18,12 @@ class Command(BaseCommand):
             return
 
         if "auth_user" not in tables:
-            raise CommandError("No legacy auth_user table was found in this database.")
+            self.stdout.write(
+                self.style.SUCCESS(
+                    "No legacy auth_user table found. Assuming a fresh database and skipping legacy auth upgrade."
+                )
+            )
+            return
 
         user_group_through = User.groups.through._meta.db_table
         user_permission_through = User.user_permissions.through._meta.db_table
