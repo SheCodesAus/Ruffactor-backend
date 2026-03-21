@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 from pathlib import Path
+from corsheaders.defaults import default_headers
 
 import os
 try:
@@ -68,6 +69,13 @@ CORS_ALLOWED_ORIGINS = _env_list("CORS_ALLOWED_ORIGINS")
 CORS_ALLOW_ALL_ORIGINS = _env_flag("CORS_ALLOW_ALL_ORIGINS", default=True)
 CSRF_TRUSTED_ORIGINS = _env_list("CSRF_TRUSTED_ORIGINS")
 
+
+CORS_ALLOW_CREDENTIALS = True # If using cookies/auth
+CORS_ALLOW_HEADERS = (
+    *default_headers,
+    'content-type',
+    'authorization', # Add if using JWT/Auth0 as per your stack
+)
 
 # Application definition
 
