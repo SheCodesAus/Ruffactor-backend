@@ -295,105 +295,46 @@ def _build_password_reset_link(request, user):
 
     return f"{frontend_base_url}?uid={uid}&token={token}"
 
-
-# class ForgotPasswordView(APIView):
-#     permission_classes = [permissions.AllowAny]
-
-#     def post(self, request):
-#         serializer = ForgotPasswordRequestSerializer(data=request.data)
-#         serializer.is_valid(raise_exception=True)
-
-#         email = serializer.validated_data["email"]
-#         user = None
-
-#         for candidate in _gmail_alias_candidates(email):
-#             try:
-#                 user = User.objects.get(email__iexact=candidate, is_active=True)
-#                 break
-#             except User.DoesNotExist:
-#                 continue
-
-#         if user:
-#             reset_link = _build_password_reset_link(request, user)
-
-#             send_mail(
-#                 subject="Reset your password",
-#                 message=(
-#                     f"Hi {user.first_name},\n\n"
-#                     f"Use the link below to reset your password:\n\n"
-#                     f"{reset_link}\n\n"
-#                     "If you did not request this, you can ignore this email."
-#                 ),
-#                 from_email=settings.DEFAULT_FROM_EMAIL,
-#                 recipient_list=[user.email],
-#                 fail_silently=False,
-#             )
-
-#         return Response(
-#             {
-#                 "message": "If an account exists for that email, a password reset email has been sent."
-#             },
-#             status=status.HTTP_200_OK,
-#         )
-
-# Debugging
 class ForgotPasswordView(APIView):
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
 
     def post(self, request):
-        try:
-            print("FORGOT_PASSWORD request.data =", request.data)
+        serializer = ForgotPasswordRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-            serializer = ForgotPasswordRequestSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            print("serializer valid")
+        email = serializer.validated_data["email"]
 
-            email = serializer.validated_data["email"]
-            print("email =", email)
+        user = None
+        for candidate in _get_email_candidates(email):
+            try:
+                user = User.objects.get(email__iexact=candidate, is_active=True)
+                break
+            except User.DoesNotExist:
+                continue
 
-            user = None
-            for candidate in _get_email_candidates(email):
-                print("trying candidate =", candidate)
-                try:
-                    user = User.objects.get(email__iexact=candidate, is_active=True)
-                    print("matched user =", user.email)
-                    break
-                except User.DoesNotExist:
-                    pass
+        if user:
+            reset_link = _build_password_reset_link(request, user)
 
-            if user:
-                reset_link = _build_password_reset_link(request, user)
-                print("reset_link =", reset_link)
-
-                send_mail(
-                    subject="Reset your Ruffactor password",
-                    message=(
-                        f"Hi {user.first_name or 'there'},\n\n"
-                        f"Use the link below to reset your password:\n\n"
-                        f"{reset_link}\n\n"
-                        "If you did not request this, you can ignore this email."
-                    ),
-                    from_email=settings.DEFAULT_FROM_EMAIL,
-                    recipient_list=[user.email],
-                    fail_silently=False,
-                )
-                print("email sent")
-
-            return Response(
-                {
-                    "message": "If an account exists for that email, a password reset email has been sent."
-                },
-                status=status.HTTP_200_OK,
+            send_mail(
+                subject="Reset your Ruffactor password",
+                message=(
+                    f"Hi {user.first_name or 'there'},\n\n"
+                    f"Use the link below to reset your password:\n\n"
+                    f"{reset_link}\n\n"
+                    "If you did not request this, you can ignore this email."
+                ),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+                fail_silently=False,
             )
 
-        except Exception as e:
-            print("FORGOT_PASSWORD ERROR:", str(e))
-            print(traceback.format_exc())
-            return Response(
-                {"detail": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        return Response(
+            {
+                "message": "If an account exists for that email, you will receive a password reset email shortly."
+            },
+            status=status.HTTP_200_OK,
+        )
         
 class ResetPasswordConfirmView(APIView):
     permission_classes = [permissions.AllowAny]
