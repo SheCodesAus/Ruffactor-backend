@@ -512,7 +512,7 @@ class UserAccountView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 class UserListView(APIView):
-    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         users = User.objects.all().order_by("id")
