@@ -515,7 +515,7 @@ class UserListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        users = User.objects.all().order_by("id")
+        users = User.objects.exclude(id=request.user.id).order_by("id")
         serializer = UserSummarySerializer(users, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
