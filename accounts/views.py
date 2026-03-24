@@ -127,6 +127,7 @@ def _serialize_user_payload(user):
         "first_name": user.first_name,
         "last_name": user.last_name,
         "is_active": user.is_active,
+        "is_admin": user.is_staff,
         "display_name": profile.display_name,
         "bio": profile.bio,
         "avatar_url": profile.avatar_url,
