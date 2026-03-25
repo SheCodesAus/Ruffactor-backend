@@ -533,10 +533,7 @@ class UserSearchView(APIView):
 
         query_parts = [part for part in query.split() if part]
 
-        users = (
-            User.objects.select_related("profile")
-            .exclude(id=request.user.id)
-        )
+        users = User.objects.select_related("profile")
 
         if len(query_parts) >= 2:
             first_part = query_parts[0]
@@ -546,17 +543,13 @@ class UserSearchView(APIView):
             users = users.filter(
                 Q(first_name__icontains=first_part, last_name__icontains=last_part)
                 | Q(first_name__icontains=last_part, last_name__icontains=first_part)
-                | Q(first_name__icontains=full_query)
-                | Q(last_name__icontains=full_query)
-                | Q(email__icontains=full_query)
-                | Q(profile__display_name__icontains=full_query)
+                # | Q(first_name__icontains=full_query)
+                # | Q(last_name__icontains=full_query)
             )
         else:
             users = users.filter(
                 Q(first_name__icontains=query)
                 | Q(last_name__icontains=query)
-                | Q(email__icontains=query)
-                | Q(profile__display_name__icontains=query)
             )
 
         users = users.order_by("first_name", "last_name", "id").distinct()[:10]
@@ -564,7 +557,7 @@ class UserSearchView(APIView):
         serializer = UserSearchSerializer(users, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
     
-    
+
 class ProfileView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
