@@ -333,6 +333,18 @@ class UserSummarySerializer(serializers.ModelSerializer):
         # fields = ("id", "username", "first_name", "last_name")
         exclude = ("password",)
 
+class UserSearchSerializer(serializers.ModelSerializer):
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ("id", "first_name", "last_name", "email", "display_name")
+
+    def get_display_name(self, obj):
+        profile = getattr(obj, "profile", None)
+        profile_display_name = (getattr(profile, "display_name", "") or "").strip()
+        full_name = f"{(obj.first_name or '').strip()} {(obj.last_name or '').strip()}".strip()
+        return profile_display_name or full_name or obj.email
 
 class TeamSerializer(serializers.ModelSerializer):
     slug = serializers.CharField(required=False, allow_blank=True)
