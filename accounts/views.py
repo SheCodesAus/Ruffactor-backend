@@ -1249,9 +1249,9 @@ def _compute_metrics(start, end):
 
 
 class AnalyticsView(APIView):
-    """Platform-wide KPI metrics for the admin analytics dashboard."""
+    """Platform-wide KPI metrics for the analytics dashboard."""
 
-    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         period = request.query_params.get("period", "weekly")
