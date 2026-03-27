@@ -7,6 +7,7 @@ from django.contrib.admin.sites import site
 from django.contrib.auth import get_user_model
 from django.db import connections
 from django.test import TestCase
+from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.authtoken.models import Token
@@ -468,6 +469,49 @@ class AuthenticationAccessTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_302_FOUND)
         self.assertEqual(response["Location"], "/auth/profile/")
+
+
+class ForgotPasswordViewTests(APITestCase):
+    def setUp(self):
+        self.user = create_project_user(
+            email="forgot_password_user@example.com",
+            first_name="Forgot",
+        )
+        self.url = "/auth/forgot-password/"
+
+    @override_settings(
+        EMAIL_HOST_USER=None,
+        EMAIL_HOST_PASSWORD=None,
+        DEFAULT_FROM_EMAIL=None,
+    )
+    @patch("accounts.views.send_mail")
+    def test_forgot_password_returns_200_when_email_config_missing(self, mock_send_mail):
+        response = self.client.post(
+            self.url,
+            {"email": self.user.email},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("If an account exists", response.data["message"])
+        mock_send_mail.assert_not_called()
+
+    @override_settings(
+        EMAIL_HOST_USER="ruffactor.app@gmail.com",
+        EMAIL_HOST_PASSWORD="app-password",
+        DEFAULT_FROM_EMAIL="ruffactor.app@gmail.com",
+    )
+    @patch("accounts.views.send_mail", side_effect=Exception("smtp failure"))
+    def test_forgot_password_returns_200_when_email_send_fails(self, mock_send_mail):
+        response = self.client.post(
+            self.url,
+            {"email": self.user.email},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("If an account exists", response.data["message"])
+        mock_send_mail.assert_called_once()
 
 
 class SignUpTeamSelectionTests(APITestCase):

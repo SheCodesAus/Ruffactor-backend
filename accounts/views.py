@@ -1,4 +1,5 @@
 import csv
+import logging
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth import login as auth_login, logout as auth_logout, update_session_auth_hash
@@ -19,8 +20,6 @@ from django.core.mail import send_mail
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
-# Debugging
-import traceback
 from rest_framework import status
 
 
@@ -45,6 +44,7 @@ from .serializers import (
 )
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 def _request_prefers_html(request):
@@ -296,6 +296,11 @@ def _build_password_reset_link(request, user):
 
     return f"{frontend_base_url}?uid={uid}&token={token}"
 
+
+def _password_reset_email_is_configured():
+    """Return True when SMTP credentials needed for password reset are present."""
+    return bool(settings.EMAIL_HOST_USER and settings.EMAIL_HOST_PASSWORD and settings.DEFAULT_FROM_EMAIL)
+
 class ForgotPasswordView(APIView):
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
@@ -317,18 +322,26 @@ class ForgotPasswordView(APIView):
         if user:
             reset_link = _build_password_reset_link(request, user)
 
-            send_mail(
-                subject="Reset your Ruffactor password",
-                message=(
-                    f"Hi {user.first_name or 'there'},\n\n"
-                    f"Use the link below to reset your password:\n\n"
-                    f"{reset_link}\n\n"
-                    "If you did not request this, you can ignore this email."
-                ),
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[user.email],
-                fail_silently=False,
-            )
+            if not _password_reset_email_is_configured():
+                logger.error(
+                    "Password reset email skipped because SMTP credentials are missing."
+                )
+            else:
+                try:
+                    send_mail(
+                        subject="Reset your Ruffactor password",
+                        message=(
+                            f"Hi {user.first_name or 'there'},\n\n"
+                            f"Use the link below to reset your password:\n\n"
+                            f"{reset_link}\n\n"
+                            "If you did not request this, you can ignore this email."
+                        ),
+                        from_email=settings.DEFAULT_FROM_EMAIL,
+                        recipient_list=[user.email],
+                        fail_silently=False,
+                    )
+                except Exception:
+                    logger.exception("Password reset email delivery failed.")
 
         return Response(
             {
