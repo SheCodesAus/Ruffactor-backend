@@ -41,6 +41,7 @@ from .serializers import (
     ForgotPasswordRequestSerializer,
     ResetPasswordConfirmSerializer,
     _get_email_candidates,
+    UserSearchSerializer,
 )
 
 User = get_user_model()
@@ -532,6 +533,43 @@ class UserListView(APIView):
         users = User.objects.exclude(id=request.user.id).order_by("id")
         serializer = UserSummarySerializer(users, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class UserSearchView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        query = request.query_params.get("q", "").strip()
+
+        if len(query) < 2:
+            return Response([], status=status.HTTP_200_OK)
+
+        query_parts = [part for part in query.split() if part]
+
+        users = User.objects.select_related("profile")
+
+        if len(query_parts) >= 2:
+            first_part = query_parts[0]
+            last_part = query_parts[-1]
+            full_query = " ".join(query_parts)
+
+            users = users.filter(
+                Q(first_name__icontains=first_part, last_name__icontains=last_part)
+                | Q(first_name__icontains=last_part, last_name__icontains=first_part)
+                # | Q(first_name__icontains=full_query)
+                # | Q(last_name__icontains=full_query)
+            )
+        else:
+            users = users.filter(
+                Q(first_name__icontains=query)
+                | Q(last_name__icontains=query)
+            )
+
+        users = users.order_by("first_name", "last_name", "id").distinct()[:10]
+
+        serializer = UserSearchSerializer(users, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
 
 class ProfileView(APIView):
     permission_classes = [permissions.IsAuthenticated]
