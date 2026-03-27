@@ -23,7 +23,7 @@ from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
 
 
-from .models import Kudos, KudosComment, Profile, SkillCategory, Team, TeamMembership
+from .models import Kudos, KudosComment, KudosSkillTag, Profile, SkillCategory, Team, TeamMembership
 from .serializers import (
     ActiveTeamWriteSerializer,
     KudosCommentReadSerializer,
@@ -1207,3 +1207,64 @@ class PublicKudosListView(generics.ListAPIView):
             .distinct()
         )
         return _apply_kudos_filters(queryset, self.request.query_params)
+
+
+def _period_bounds(period):
+    """Return (current_start, current_end, previous_start, previous_end) for a period."""
+    now = timezone.now()
+
+    if period == "monthly":
+        current_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        current_end = now
+
+        if current_start.month == 1:
+            prev_start = current_start.replace(year=current_start.year - 1, month=12)
+        else:
+            prev_start = current_start.replace(month=current_start.month - 1)
+        prev_end = current_start
+
+    else:
+        monday = now - timezone.timedelta(days=now.weekday())
+        current_start = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+        current_end = now
+
+        prev_start = current_start - timezone.timedelta(weeks=1)
+        prev_end = current_start
+
+    return current_start, current_end, prev_start, prev_end
+
+
+def _compute_metrics(start, end):
+    """Return platform-wide kudos metrics for a date range."""
+    base = Kudos.objects.filter(is_archived=False, created_at__gte=start, created_at__lt=end)
+    return {
+        "total_kudos": base.count(),
+        "active_givers": base.values("sender").distinct().count(),
+        "skills_tagged": KudosSkillTag.objects.filter(
+            kudos__is_archived=False,
+            created_at__gte=start,
+            created_at__lt=end,
+        ).count(),
+    }
+
+
+class AnalyticsView(APIView):
+    """Platform-wide KPI metrics for the admin analytics dashboard."""
+
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+
+    def get(self, request):
+        period = request.query_params.get("period", "weekly")
+        if period not in ("weekly", "monthly"):
+            period = "weekly"
+
+        current_start, current_end, prev_start, prev_end = _period_bounds(period)
+
+        return Response(
+            {
+                "period": period,
+                "current": _compute_metrics(current_start, current_end),
+                "previous": _compute_metrics(prev_start, prev_end),
+            },
+            status=status.HTTP_200_OK,
+        )

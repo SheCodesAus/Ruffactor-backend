@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     AllKudosByUserView,
+    AnalyticsView,
     ReceivedKudosByUserView,
     GivenKudosByUserView,
     KudosViewSet,
@@ -22,6 +23,7 @@ urlpatterns = [
     path("users/", UserListView.as_view(), name="user-list"),
     path("users/search/", UserSearchView.as_view(), name="user-search"),
     path("kudos/public/", PublicKudosListView.as_view(), name="kudos-public"),
+    path("kudos/analytics/", AnalyticsView.as_view(), name="kudos-analytics"),
     path(
         "users/<int:pk>/kudos/",
         AllKudosByUserView.as_view(),
